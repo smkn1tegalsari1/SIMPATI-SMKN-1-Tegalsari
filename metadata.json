@@ -1,0 +1,6 @@
+{
+  "name": "SIMPATI SMKN 1 Tegalsari",
+  "description": "Sistem Informasi Manajemen Pembelajaran Terintegrasi SMKN 1 Tegalsari - Presensi KBM guru dan validasi guru piket terpadu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
