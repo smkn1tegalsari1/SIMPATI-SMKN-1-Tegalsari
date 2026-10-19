@@ -11,7 +11,6 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onOpenDemoLogin }) => {
   const {
     currentUser,
-    switchRole,
     currentPeriod,
     setPeriodSimulated,
     currentTimeString,
@@ -93,26 +92,6 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDemoLogin }) => {
               </option>
             ))}
           </select>
-        </div>
-
-        {/* Quick Role Switcher Pill */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-          {(['admin', 'guru', 'piket', 'pimpinan'] as UserRole[]).map((r) => {
-            const isCurrent = currentUser.role === r;
-            return (
-              <button
-                key={r}
-                onClick={() => switchRole(r)}
-                className={`px-2 py-0.5 md:px-2.5 md:py-1 text-[11px] md:text-xs font-semibold rounded-md transition-all ${
-                  isCurrent
-                    ? 'bg-[#E59819] text-[#0B1E2E] shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
-              >
-                {r === 'admin' ? 'Admin' : r === 'guru' ? 'Guru' : r === 'piket' ? 'Piket' : 'Pimpinan'}
-              </button>
-            );
-          })}
         </div>
 
         {/* Date & Time Widget (Real-Time sesuai Waktu Laptop) */}

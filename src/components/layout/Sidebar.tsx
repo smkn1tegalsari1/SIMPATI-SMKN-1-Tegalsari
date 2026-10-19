@@ -14,7 +14,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { ActiveMenu } from '../../types';
+import { ActiveMenu, UserRole } from '../../types';
 
 interface SidebarProps {
   onOpenDemoLogin: () => void;
@@ -23,17 +23,30 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ onOpenDemoLogin }) => {
   const { activeMenu, setActiveMenu, currentUser } = useApp();
 
-  const menuItems: { id: ActiveMenu; label: string; icon: React.FC<{ className?: string }> }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
-    { id: 'monitoring', label: 'Monitoring Pembelajaran', icon: Tv },
-    { id: 'pembelajaran_saya', label: 'Pembelajaran Saya', icon: BookOpen },
-    { id: 'guru_piket', label: 'Guru Piket', icon: ShieldCheck },
-    { id: 'dashboard_pimpinan', label: 'Dashboard Pimpinan', icon: BarChart3 },
-    { id: 'data_master', label: 'Data Master', icon: Database },
-    { id: 'laporan', label: 'Laporan', icon: FileText },
-    { id: 'manajemen_akun', label: 'Manajemen Akun', icon: Users },
-    { id: 'mode_tv', label: 'Dashboard TV', icon: Tv2 },
+  const allMenuItems: {
+    id: ActiveMenu;
+    label: string;
+    icon: React.FC<{ className?: string }>;
+    allowedRoles: UserRole[];
+    allowIfPiketToday?: boolean;
+  }[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
+    { id: 'pembelajaran_saya', label: 'Pembelajaran Saya', icon: BookOpen, allowedRoles: ['admin', 'guru'] },
+    { id: 'guru_piket', label: 'Guru Piket', icon: ShieldCheck, allowedRoles: ['admin', 'piket'], allowIfPiketToday: true },
+    { id: 'monitoring', label: 'Monitoring Pembelajaran', icon: Tv, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
+    { id: 'dashboard_pimpinan', label: 'Dashboard Pimpinan', icon: BarChart3, allowedRoles: ['admin', 'pimpinan'] },
+    { id: 'data_master', label: 'Data Master', icon: Database, allowedRoles: ['admin'] },
+    { id: 'laporan', label: 'Laporan', icon: FileText, allowedRoles: ['admin', 'piket', 'pimpinan'] },
+    { id: 'manajemen_akun', label: 'Manajemen Akun', icon: Users, allowedRoles: ['admin'] },
+    { id: 'mode_tv', label: 'Dashboard TV', icon: Tv2, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
   ];
+
+  const menuItems = allMenuItems.filter((item) => {
+    if (currentUser.role === 'admin') return true;
+    if (item.allowedRoles.includes(currentUser.role)) return true;
+    if (item.allowIfPiketToday && currentUser.role === 'guru' && currentUser.isPiketToday) return true;
+    return false;
+  });
 
   return (
     <aside className="w-64 bg-[#0B1E2E] text-slate-300 flex flex-col justify-between shrink-0 h-screen sticky top-0 border-r border-slate-800/60 select-none z-30">
@@ -99,13 +112,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenDemoLogin }) => {
               )}
             </div>
           </div>
-          <button
-            onClick={onOpenDemoLogin}
-            title="Ganti Peran Pengguna"
-            className="p-1.5 rounded-lg bg-slate-800 text-amber-400 hover:bg-slate-700 transition"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-          </button>
         </div>
 
         <button
