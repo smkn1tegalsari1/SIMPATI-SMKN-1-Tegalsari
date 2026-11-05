@@ -137,12 +137,19 @@ export const PembelajaranSayaView: React.FC = () => {
     };
   }, [teacherBaseSchedules, getScheduleStatus]);
 
-  // Handlers untuk simpan & hapus jadwal
-  const handleSaveSchedule = (scheduleData: ScheduleItem) => {
-    if (editingSchedule) {
-      updateSchedule(scheduleData);
+  // Handlers untuk simpan batch (rentang jam mulai s/d selesai) & hapus jadwal
+  const handleSaveBatch = (schedulesToSave: ScheduleItem[]) => {
+    if (editingSchedule && schedulesToSave.length === 1) {
+      updateSchedule(schedulesToSave[0]);
     } else {
-      addSchedule(scheduleData);
+      // Jika sebelumnya sedang mengedit, hapus jadwal lama terlebih dahulu agar tidak duplikat
+      if (editingSchedule) {
+        deleteSchedule(editingSchedule.id);
+      }
+      // Tambahkan seluruh jadwal rentang baru
+      schedulesToSave.forEach((sch) => {
+        addSchedule(sch);
+      });
     }
   };
 
@@ -486,7 +493,7 @@ export const PembelajaranSayaView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal Input & Edit Jadwal Guru dengan Deteksi Bentrok */}
+      {/* Modal Input & Edit Jadwal Guru dengan Deteksi Bentrok & Rentang Jam */}
       <GuruScheduleModal
         isOpen={isModalOpen}
         onClose={() => {
@@ -499,7 +506,7 @@ export const PembelajaranSayaView: React.FC = () => {
         subjects={subjects}
         rooms={rooms}
         editingSchedule={editingSchedule}
-        onSave={handleSaveSchedule}
+        onSaveBatch={handleSaveBatch}
       />
 
       {/* Modal Konfirmasi Hapus Jadwal */}
