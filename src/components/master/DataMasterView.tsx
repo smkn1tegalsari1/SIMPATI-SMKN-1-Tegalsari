@@ -180,7 +180,7 @@ export const DataMasterView: React.FC = () => {
           break;
         case 'reset_database':
           resetAllData();
-          setToastNotification('Database berhasil dikembalikan ke data awal sistem.');
+          setToastNotification('Seluruh database demo berhasil dibersihkan. Sistem siap digunakan dari awal!');
           break;
       }
     } finally {
@@ -961,7 +961,7 @@ export const DataMasterView: React.FC = () => {
           <span>Jadwal Pelajaran ({schedules.length})</span>
         </button>
 
-        {/* Tombol Pemeliharaan Database: Kosongkan Tab / Reset Data Awal */}
+        {/* Tombol Pemeliharaan Database: Kosongkan Tab / Kosongkan Seluruh Database */}
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => {
@@ -995,16 +995,16 @@ export const DataMasterView: React.FC = () => {
               setDeleteTarget({
                 type: 'reset_database',
                 title: 'Seluruh Database SIMPATI',
-                subtitle: 'Mengembalikan seluruh tabel master ke data demo awal resmi SMKN 1 Tegalsari.',
-                badge: 'Reset Database',
-                warningNote: 'PERHATIAN: Tindakan ini akan menimpa seluruh perubahan saat ini dengan dataset standar sekolah.'
+                subtitle: 'Mengosongkan seluruh data master dan jadwal pembelajaran sehingga database bersih dari awal (Clean Slate).',
+                badge: 'Bersihkan Database',
+                warningNote: 'PERHATIAN: Tindakan ini akan mengosongkan seluruh guru, mapel, kelas, jurusan, ruangan, dan jadwal dari sistem. Akun administrator tetap dipertahankan.'
               });
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold rounded-xl transition cursor-pointer"
-            title="Kembalikan database ke data bawaan sistem"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
+            title="Bersihkan seluruh database agar kosong dari awal"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden md:inline">Reset Data Bawaan</span>
+            <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+            <span className="hidden md:inline">Bersihkan Database (Clean Slate)</span>
           </button>
         </div>
       </div>

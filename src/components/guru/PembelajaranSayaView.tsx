@@ -7,28 +7,46 @@ import {
   CheckCircle2,
   CalendarDays,
   Sparkles,
+  Plus,
+  Pencil,
+  Trash2,
+  AlertTriangle,
+  Layers,
+  Calendar,
 } from 'lucide-react';
-import { ScheduleLessonStatus } from '../../types';
+import { ScheduleItem, ScheduleLessonStatus, Teacher } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
+import { GuruScheduleModal } from './GuruScheduleModal';
 
 export const PembelajaranSayaView: React.FC = () => {
   const {
     schedules,
     currentUser,
     teachers,
+    classes,
+    subjects,
+    rooms,
     currentDateString,
     currentTimeString,
     currentPeriod,
     effectiveWeekType,
     getScheduleStatus,
+    addSchedule,
+    updateSchedule,
+    deleteSchedule,
   } = useApp();
 
   // If logged in as admin or pimpinan, allow selecting which teacher to view as
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>(
-    currentUser.teacherId || (teachers[0]?.id ?? 't-6')
+    currentUser.teacherId || (teachers[0]?.id ?? '')
   );
   const [selectedWeek, setSelectedWeek] = useState<'ACTIVE' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('ACTIVE');
   const [selectedStatusTab, setSelectedStatusTab] = useState<'ALL' | ScheduleLessonStatus>('ALL');
+
+  // Modal States
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleItem | null>(null);
+  const [deleteTargetSchedule, setDeleteTargetSchedule] = useState<ScheduleItem | null>(null);
 
   // Keep selected teacher in sync when currentUser changes
   useEffect(() => {
@@ -40,19 +58,48 @@ export const PembelajaranSayaView: React.FC = () => {
   }, [currentUser.teacherId, teachers, selectedTeacherId]);
 
   // Safe teacher lookup
-  const currentTeacherObj =
-    currentUser.role === 'guru'
-      ? (currentUser.teacherId ? teachers.find((t) => t.id === currentUser.teacherId) : null) || teachers.find((t) => t.id === selectedTeacherId) || null
-      : teachers.find((t) => t.id === selectedTeacherId) || teachers[0] || null;
+  const currentTeacherObj: Teacher = useMemo(() => {
+    if (currentUser.role === 'guru') {
+      const match = (currentUser.teacherId ? teachers.find((t) => t.id === currentUser.teacherId) : null) ||
+        teachers.find((t) => t.id === selectedTeacherId);
+      if (match) return match;
+      // Fallback object from currentUser
+      return {
+        id: currentUser.teacherId || currentUser.id || 'guru-current',
+        code: currentUser.username || 'GURU',
+        nip: '-',
+        name: currentUser.name || 'Guru Pengajar',
+        title: currentUser.title || 'Guru SMKN 1 Tegalsari',
+        email: '',
+        phone: '',
+      };
+    }
 
-  const effectiveTeacherId =
-    currentUser.role === 'guru'
-      ? currentUser.teacherId || ''
-      : currentTeacherObj?.id || selectedTeacherId || teachers[0]?.id || '';
+    const found = teachers.find((t) => t.id === selectedTeacherId) || teachers[0];
+    if (found) return found;
+
+    return {
+      id: 'guru-default',
+      code: 'GURU',
+      nip: '-',
+      name: currentUser.name || 'Guru Pengajar',
+      title: 'Guru SMKN 1 Tegalsari',
+      email: '',
+      phone: '',
+    };
+  }, [currentUser, teachers, selectedTeacherId]);
+
+  const effectiveTeacherId = currentTeacherObj.id;
 
   const teacherBaseSchedules = useMemo(() => {
     return schedules.filter((s) => {
-      if (s.teacherId !== effectiveTeacherId) return false;
+      // Cocokkan id atau nama/kode guru jika id belum sinkron
+      const matchId = s.teacherId === effectiveTeacherId;
+      const matchName = currentTeacherObj?.name && s.teacherName.toLowerCase() === currentTeacherObj.name.toLowerCase();
+      const matchCode = currentTeacherObj?.code && s.teacherCode && s.teacherCode.toLowerCase() === currentTeacherObj.code.toLowerCase();
+
+      if (!matchId && !matchName && !matchCode) return false;
+
       if (selectedWeek === 'ACTIVE') {
         const itemWeek = s.weekType || 'ALL';
         return itemWeek === 'ALL' || itemWeek === effectiveWeekType;
@@ -62,7 +109,7 @@ export const PembelajaranSayaView: React.FC = () => {
       }
       return true;
     });
-  }, [schedules, effectiveTeacherId, selectedWeek, effectiveWeekType]);
+  }, [schedules, effectiveTeacherId, currentTeacherObj, selectedWeek, effectiveWeekType]);
 
   const teacherSchedules = useMemo(() => {
     if (selectedStatusTab === 'ALL') return teacherBaseSchedules;
@@ -90,6 +137,22 @@ export const PembelajaranSayaView: React.FC = () => {
     };
   }, [teacherBaseSchedules, getScheduleStatus]);
 
+  // Handlers untuk simpan & hapus jadwal
+  const handleSaveSchedule = (scheduleData: ScheduleItem) => {
+    if (editingSchedule) {
+      updateSchedule(scheduleData);
+    } else {
+      addSchedule(scheduleData);
+    }
+  };
+
+  const handleConfirmDelete = () => {
+    if (deleteTargetSchedule) {
+      deleteSchedule(deleteTargetSchedule.id);
+      setDeleteTargetSchedule(null);
+    }
+  };
+
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
       {/* Header Banner */}
@@ -107,10 +170,11 @@ export const PembelajaranSayaView: React.FC = () => {
           </div>
 
           <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
-            {currentTeacherObj ? currentTeacherObj.name : currentUser.name || 'Guru Pengajar'}
+            {currentTeacherObj.name}
           </h1>
           <p className="text-xs md:text-sm text-slate-300">
-            {currentTeacherObj ? currentTeacherObj.title : currentUser.title || 'Guru SMKN 1 Tegalsari'}
+            {currentTeacherObj.title}
+            {currentTeacherObj.code ? ` · Kode Guru: ${currentTeacherObj.code}` : ''}
             {currentTeacherObj?.department ? ` · Jurusan ${currentTeacherObj.department}` : ''}
           </p>
 
@@ -127,23 +191,39 @@ export const PembelajaranSayaView: React.FC = () => {
           </div>
         </div>
 
-        {/* Teacher selector for Admin/Pimpinan */}
-        {currentUser.role !== 'guru' && teachers.length > 0 && (
-          <div className="bg-white/10 backdrop-blur-md p-3.5 rounded-2xl border border-white/15 space-y-2 text-xs">
-            <span className="font-bold text-slate-200 block">Pilih Guru Pengajar:</span>
-            <select
-              value={selectedTeacherId}
-              onChange={(e) => setSelectedTeacherId(e.target.value)}
-              className="bg-slate-900/90 text-white font-bold p-2 rounded-xl border border-slate-700 outline-none w-full cursor-pointer"
-            >
-              {teachers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.code})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Right Section: Add Schedule Button & Teacher Selector */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* Tombol Input Jadwal Mandiri Guru */}
+          <button
+            onClick={() => {
+              setEditingSchedule(null);
+              setIsModalOpen(true);
+            }}
+            className="flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 text-[#0B1E2E] font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-amber-500/20 transition cursor-pointer active:scale-95"
+            title="Tambah Jadwal Mengajar untuk akun Anda sendiri"
+          >
+            <Plus className="w-4 h-4 stroke-[3]" />
+            <span>Input Jadwal Mengajar</span>
+          </button>
+
+          {/* Teacher selector for Admin/Pimpinan */}
+          {currentUser.role !== 'guru' && teachers.length > 0 && (
+            <div className="bg-white/10 backdrop-blur-md p-2.5 rounded-2xl border border-white/15 space-y-1 text-xs">
+              <span className="font-bold text-slate-200 block text-[11px]">Pilih Guru:</span>
+              <select
+                value={selectedTeacherId}
+                onChange={(e) => setSelectedTeacherId(e.target.value)}
+                className="bg-slate-900/90 text-white font-bold p-2 rounded-xl border border-slate-700 outline-none w-full cursor-pointer text-xs"
+              >
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Week Filter Bar */}
@@ -175,6 +255,17 @@ export const PembelajaranSayaView: React.FC = () => {
             Semua Pekan
           </button>
         </div>
+
+        <button
+          onClick={() => {
+            setEditingSchedule(null);
+            setIsModalOpen(true);
+          }}
+          className="inline-flex items-center gap-1.5 text-cyan-700 hover:text-cyan-900 font-bold text-xs cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>Tambah Jadwal Lain</span>
+        </button>
       </div>
 
       {/* 3 Status Summary Banner */}
@@ -275,12 +366,26 @@ export const PembelajaranSayaView: React.FC = () => {
 
       {/* List of Teacher Schedules */}
       {teacherSchedules.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-500 space-y-3">
-          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-          <h3 className="font-bold text-base text-slate-800">Tidak Ada Jadwal Pelajaran</h3>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Tidak ada jadwal mengajar yang sesuai dengan filter atau status yang dipilih.
-          </p>
+        <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 space-y-4 shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-cyan-50 border border-cyan-200 text-cyan-600 flex items-center justify-center mx-auto shadow-inner">
+            <Calendar className="w-8 h-8" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-extrabold text-lg text-slate-900">Belum Ada Jadwal Pelajaran</h3>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              Anda belum memasukkan jadwal pelajaran atau tidak ada jadwal yang sesuai dengan filter yang dipilih.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setEditingSchedule(null);
+              setIsModalOpen(true);
+            }}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#0B1E2E] hover:bg-slate-800 text-amber-300 font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Input Jadwal Mengajar Anda Sekarang</span>
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -290,7 +395,7 @@ export const PembelajaranSayaView: React.FC = () => {
             return (
               <div
                 key={schedule.id}
-                className={`bg-white rounded-2xl border shadow-2xs hover:shadow-md transition p-5 space-y-4 ${
+                className={`bg-white rounded-2xl border shadow-2xs hover:shadow-md transition p-5 space-y-4 relative group ${
                   status === 'Berlangsung'
                     ? 'border-emerald-300 ring-2 ring-emerald-500/20'
                     : 'border-slate-200'
@@ -300,7 +405,7 @@ export const PembelajaranSayaView: React.FC = () => {
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2">
                     <span className="bg-[#0B1E2E] text-white font-black text-xs px-2.5 py-1 rounded-lg">
-                      Jam Ke-{schedule.periodIndex}
+                      {schedule.dayName || 'HARI'} · Jam Ke-{schedule.periodIndex}
                     </span>
                     <span className="text-xs font-bold text-slate-700 tabular-nums">
                       {schedule.timeRange || `${schedule.startTime} - ${schedule.endTime}`}
@@ -320,7 +425,7 @@ export const PembelajaranSayaView: React.FC = () => {
                         Semua Pekan
                       </span>
                     )}
-                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-cyan-50 text-cyan-800 border border-cyan-200">
                       {schedule.className}
                     </span>
                   </div>
@@ -347,14 +452,84 @@ export const PembelajaranSayaView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Clean Status Footer: 3 Statuses */}
+                {/* Clean Status Footer & Action Buttons */}
                 <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                  <span className="text-xs font-semibold text-slate-500">Status Jadwal:</span>
-                  <ScheduleStatusBadge status={status} size="md" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-500">Status:</span>
+                    <ScheduleStatusBadge status={status} size="sm" />
+                  </div>
+
+                  {/* Edit & Delete Action for Teacher */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        setEditingSchedule(schedule);
+                        setIsModalOpen(true);
+                      }}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-700 hover:bg-cyan-50 transition cursor-pointer"
+                      title="Ubah jadwal ini"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setDeleteTargetSchedule(schedule)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                      title="Hapus jadwal ini"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Modal Input & Edit Jadwal Guru dengan Deteksi Bentrok */}
+      <GuruScheduleModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingSchedule(null);
+        }}
+        teacher={currentTeacherObj}
+        allSchedules={schedules}
+        classes={classes}
+        subjects={subjects}
+        rooms={rooms}
+        editingSchedule={editingSchedule}
+        onSave={handleSaveSchedule}
+      />
+
+      {/* Modal Konfirmasi Hapus Jadwal */}
+      {deleteTargetSchedule && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4 border border-slate-200 animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-slate-900 text-base">Hapus Jadwal Mengajar?</h3>
+              <p className="text-xs text-slate-600 mt-1">
+                Jadwal <strong>{deleteTargetSchedule.subjectName}</strong> ({deleteTargetSchedule.className}) pada {deleteTargetSchedule.dayName} Jam Ke-{deleteTargetSchedule.periodIndex} akan dihapus secara permanen.
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                onClick={() => setDeleteTargetSchedule(null)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition cursor-pointer shadow-xs"
+              >
+                Ya, Hapus Jadwal
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
