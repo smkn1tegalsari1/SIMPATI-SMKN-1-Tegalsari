@@ -13,6 +13,7 @@ import {
   INITIAL_SCHEDULE,
   INITIAL_ATTENDANCE_RECORDS,
   INITIAL_USER_ACCOUNTS,
+  INITIAL_JOURNALS,
 } from './src/data/initialData';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,6 +40,7 @@ function getInitialStore() {
     schedules: INITIAL_SCHEDULE,
     attendanceRecords: INITIAL_ATTENDANCE_RECORDS,
     userAccounts: INITIAL_USER_ACCOUNTS,
+    journals: INITIAL_JOURNALS,
     activeWeekFilter: 'ACTIVE',
     lastUpdated: Date.now(),
     lastUpdatedBy: 'System',
@@ -176,6 +178,7 @@ async function startServer() {
           academicYears: [],
           schedules: [],
           attendanceRecords: {},
+          journals: [],
           userAccounts: (inMemoryStore?.userAccounts || INITIAL_USER_ACCOUNTS).filter((u: any) => u.role === 'admin'),
           activeWeekFilter: 'ACTIVE',
           lastUpdated: Date.now(),

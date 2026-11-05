@@ -45,7 +45,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
   const [dayName, setDayName] = useState<string>('SENIN');
   const [startPeriod, setStartPeriod] = useState<number>(1);
   const [endPeriod, setEndPeriod] = useState<number>(1);
-  const [weekType, setWeekType] = useState<ScheduleWeekType>('ALL');
+  const [weekType, setWeekType] = useState<ScheduleWeekType>('P10_PROD_P11_NORM');
   const [classId, setClassId] = useState<string>('');
   const [subjectId, setSubjectId] = useState<string>('');
   const [roomId, setRoomId] = useState<string>('');
@@ -61,7 +61,12 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
         : parseInt(String(editingSchedule.periodIndex), 10) || 1;
       setStartPeriod(pNum);
       setEndPeriod(pNum);
-      setWeekType(editingSchedule.weekType || 'ALL');
+      // Jika jadwal lama bernilai ALL, alihkan ke P10_PROD_P11_NORM
+      setWeekType(
+        editingSchedule.weekType && editingSchedule.weekType !== 'ALL'
+          ? editingSchedule.weekType
+          : 'P10_PROD_P11_NORM'
+      );
 
       // 1. Sinkron Kelas
       const matchClass = classes.find(
@@ -101,7 +106,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       setDayName('SENIN');
       setStartPeriod(1);
       setEndPeriod(1);
-      setWeekType('ALL');
+      setWeekType('P10_PROD_P11_NORM');
 
       // Set default sesuai data master terbaru jika ada
       setClassId((prev) => (classes.some((c) => c.id === prev) ? prev : classes[0]?.id || ''));
@@ -449,27 +454,9 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
               Rotasi Pekan Mingguan <span className="text-rose-500">*</span>
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               <label
-                className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition ${
-                  weekType === 'ALL'
-                    ? 'bg-[#0B1E2E] text-white border-transparent font-bold shadow-xs'
-                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="weekType"
-                  value="ALL"
-                  checked={weekType === 'ALL'}
-                  onChange={() => setWeekType('ALL')}
-                  className="hidden"
-                />
-                <span className="truncate">🌐 Setiap Pekan</span>
-              </label>
-
-              <label
-                className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition ${
+                className={`p-3 rounded-xl border flex items-center gap-2.5 cursor-pointer transition ${
                   weekType === 'P10_PROD_P11_NORM'
                     ? 'bg-emerald-700 text-white border-transparent font-bold shadow-xs'
                     : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -483,11 +470,17 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
                   onChange={() => setWeekType('P10_PROD_P11_NORM')}
                   className="hidden"
                 />
-                <span className="truncate">🟢 K10 Prod · K11 Norm</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-300 shrink-0" />
+                <div className="truncate">
+                  <span className="font-bold">🟢 K10 Prod · K11 Norm</span>
+                  <p className={`text-[10px] ${weekType === 'P10_PROD_P11_NORM' ? 'text-emerald-100' : 'text-slate-500'}`}>
+                    Kelas 10 Produktif & Kelas 11 NormAdaptif
+                  </p>
+                </div>
               </label>
 
               <label
-                className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition ${
+                className={`p-3 rounded-xl border flex items-center gap-2.5 cursor-pointer transition ${
                   weekType === 'P10_NORM_P11_PROD'
                     ? 'bg-purple-700 text-white border-transparent font-bold shadow-xs'
                     : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -501,7 +494,13 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
                   onChange={() => setWeekType('P10_NORM_P11_PROD')}
                   className="hidden"
                 />
-                <span className="truncate">🟣 K10 Norm · K11 Prod</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-300 shrink-0" />
+                <div className="truncate">
+                  <span className="font-bold">🟣 K10 Norm · K11 Prod</span>
+                  <p className={`text-[10px] ${weekType === 'P10_NORM_P11_PROD' ? 'text-purple-100' : 'text-slate-500'}`}>
+                    Kelas 10 NormAdaptif & Kelas 11 Produktif
+                  </p>
+                </div>
               </label>
             </div>
           </div>

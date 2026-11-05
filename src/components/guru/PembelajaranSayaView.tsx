@@ -13,10 +13,12 @@ import {
   AlertTriangle,
   Layers,
   Calendar,
+  BookCheck,
 } from 'lucide-react';
-import { ScheduleItem, ScheduleLessonStatus, Teacher } from '../../types';
+import { ScheduleItem, ScheduleLessonStatus, Teacher, TeachingJournal } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 import { GuruScheduleModal } from './GuruScheduleModal';
+import { TambahJurnalModal } from '../jurnal/TambahJurnalModal';
 
 export const PembelajaranSayaView: React.FC = () => {
   const {
@@ -47,6 +49,8 @@ export const PembelajaranSayaView: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ScheduleItem | null>(null);
   const [deleteTargetSchedule, setDeleteTargetSchedule] = useState<ScheduleItem | null>(null);
+  const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
+  const [journalDraft, setJournalDraft] = useState<TeachingJournal | null>(null);
 
   // Keep selected teacher in sync when currentUser changes
   useEffect(() => {
@@ -466,8 +470,46 @@ export const PembelajaranSayaView: React.FC = () => {
                     <ScheduleStatusBadge status={status} size="sm" />
                   </div>
 
-                  {/* Edit & Delete Action for Teacher */}
+                  {/* Edit & Delete & Journal Action for Teacher */}
                   <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        const now = new Date();
+                        const y = now.getFullYear();
+                        const m = String(now.getMonth() + 1).padStart(2, '0');
+                        const d = String(now.getDate()).padStart(2, '0');
+                        const todayISO = `${y}-${m}-${d}`;
+                        const pNum = typeof schedule.periodIndex === 'number'
+                          ? schedule.periodIndex
+                          : parseInt(String(schedule.periodIndex), 10) || 1;
+                        const matchedRoom = rooms.find((r) => r.name === schedule.roomName);
+
+                        const draft: TeachingJournal = {
+                          id: '',
+                          date: todayISO,
+                          teacherId: schedule.teacherId || effectiveTeacherId,
+                          teacherName: schedule.teacherName,
+                          teacherCode: schedule.teacherCode,
+                          classId: schedule.classId,
+                          className: schedule.className,
+                          roomId: matchedRoom ? matchedRoom.id : undefined,
+                          roomName: schedule.roomName,
+                          subjectCode: schedule.subjectCode || 'MAPEL',
+                          subjectName: schedule.subjectName,
+                          startPeriod: pNum,
+                          endPeriod: pNum,
+                          topic: '',
+                          createdAt: Date.now(),
+                        };
+                        setJournalDraft(draft);
+                        setIsJournalModalOpen(true);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-[#4E7D78] bg-[#6B9A95]/15 hover:bg-[#6B9A95]/25 transition cursor-pointer"
+                      title="Isi Jurnal Mengajar untuk kelas ini"
+                    >
+                      <BookCheck className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Isi Jurnal</span>
+                    </button>
                     <button
                       onClick={() => {
                         setEditingSchedule(schedule);
@@ -539,6 +581,16 @@ export const PembelajaranSayaView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal Tambah Jurnal Mengajar dari Pembelajaran Saya */}
+      <TambahJurnalModal
+        isOpen={isJournalModalOpen}
+        onClose={() => {
+          setIsJournalModalOpen(false);
+          setJournalDraft(null);
+        }}
+        journalToEdit={journalDraft}
+      />
     </div>
   );
 };

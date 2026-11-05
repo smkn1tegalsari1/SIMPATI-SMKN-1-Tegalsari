@@ -3,6 +3,7 @@ import {
   LayoutGrid,
   Tv,
   BookOpen,
+  BookCheck,
   ShieldCheck,
   BarChart3,
   Database,
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = () => {
   }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
     { id: 'pembelajaran_saya', label: 'Pembelajaran Saya', icon: BookOpen, allowedRoles: ['admin', 'guru'] },
+    { id: 'jurnal_mengajar', label: 'Jurnal Mengajar', icon: BookCheck, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
     { id: 'guru_piket', label: 'Guru Piket', icon: ShieldCheck, allowedRoles: ['admin', 'piket'], allowIfPiketToday: true },
     { id: 'monitoring', label: 'Monitoring Pembelajaran', icon: Tv, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
     { id: 'dashboard_pimpinan', label: 'Dashboard Pimpinan', icon: BarChart3, allowedRoles: ['admin', 'pimpinan'] },

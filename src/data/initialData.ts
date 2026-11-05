@@ -1,4 +1,4 @@
-import { Teacher, Subject, SchoolClass, Room, ScheduleItem, AttendanceRecord, Department, AcademicYear, UserAccount } from '../types';
+import { Teacher, Subject, SchoolClass, Room, ScheduleItem, AttendanceRecord, Department, AcademicYear, UserAccount, TeachingJournal } from '../types';
 
 // Data Master Awal Bersih (Clean Slate)
 export const INITIAL_DEPARTMENTS: Department[] = [];
@@ -34,6 +34,8 @@ export const INITIAL_SCHEDULE: ScheduleItem[] = [];
 export const INITIAL_SCHEDULES = INITIAL_SCHEDULE;
 
 export const INITIAL_ATTENDANCE_RECORDS: Record<string, AttendanceRecord> = {};
+
+export const INITIAL_JOURNALS: TeachingJournal[] = [];
 
 // Akun otentikasi utama sistem
 export const INITIAL_USER_ACCOUNTS: UserAccount[] = [

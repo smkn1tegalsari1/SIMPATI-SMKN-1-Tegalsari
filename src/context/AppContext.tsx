@@ -16,6 +16,7 @@ import {
   DayNameIndo,
   ScheduleWeekType,
   ScheduleLessonStatus,
+  TeachingJournal,
 } from '../types';
 import {
   INITIAL_TEACHERS,
@@ -26,6 +27,7 @@ import {
   INITIAL_DEPARTMENTS,
   INITIAL_ACADEMIC_YEARS,
   INITIAL_USER_ACCOUNTS,
+  INITIAL_JOURNALS,
   PERIOD_TIMES,
 } from '../data/initialData';
 import { Department, AcademicYear } from '../types';
@@ -58,6 +60,7 @@ interface AppContextType {
   academicYears: AcademicYear[];
   schedules: ScheduleItem[];
   attendanceRecords: Record<string, AttendanceRecord>;
+  journals: TeachingJournal[];
   currentUser: CurrentUser;
   isAuthenticated: boolean;
   isServerConnected: boolean;
@@ -166,6 +169,11 @@ interface AppContextType {
   importSchedules: (items: ScheduleItem[]) => void;
   importClassSchedules: (classId: string, items: ScheduleItem[]) => void;
   resetAllData: () => void;
+
+  // Jurnal Mengajar
+  addJournal: (journal: TeachingJournal) => void;
+  updateJournal: (journal: TeachingJournal) => void;
+  deleteJournal: (id: string) => void;
 }
 
 // Helper Tanggal, Hari & Waktu Real-Time Bahasa Indonesia sesuai Waktu Laptop
@@ -391,6 +399,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return INITIAL_USER_ACCOUNTS;
   });
 
+  const [journals, setJournals] = useState<TeachingJournal[]>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_journals`);
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_JOURNALS;
+  });
+
   const [clientId] = useState<string>(() => `client_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`);
   const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
   const isRemoteUpdatingRef = React.useRef<boolean>(false);
@@ -599,6 +620,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const updateJournalsAndSync = (updater: TeachingJournal[] | ((prev: TeachingJournal[]) => TeachingJournal[])) => {
+    setJournals((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('journals', next);
+      return next;
+    });
+  };
+
   // Hubungkan ke Server Terpusat: Ambil state awal dan dengarkan event SSE real-time
   useEffect(() => {
     let isMounted = true;
@@ -643,6 +675,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (Array.isArray(s.userAccounts)) {
             setUserAccounts(s.userAccounts);
             try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(s.userAccounts)); } catch (e) {}
+          }
+          if (Array.isArray(s.journals)) {
+            setJournals(s.journals);
+            try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {}
           }
           if (s.activeWeekFilter) {
             setActiveWeekFilterState(s.activeWeekFilter);
@@ -695,6 +731,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             } else if (key === 'userAccounts' && Array.isArray(data)) {
               setUserAccounts(data);
               try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'journals' && Array.isArray(data)) {
+              setJournals(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data)); } catch (e) {}
             } else if (key === 'activeWeekFilter' && typeof data === 'string') {
               setActiveWeekFilterState(data as any);
               try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, data); } catch (e) {}
@@ -708,6 +747,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (Array.isArray(data.schedules)) { setSchedules(data.schedules); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data.schedules)); } catch (e) {} }
               if (data.attendanceRecords && typeof data.attendanceRecords === 'object') { setAttendanceRecords(data.attendanceRecords); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data.attendanceRecords)); } catch (e) {} }
               if (Array.isArray(data.userAccounts)) { setUserAccounts(data.userAccounts); try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(data.userAccounts)); } catch (e) {} }
+              if (Array.isArray(data.journals)) { setJournals(data.journals); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data.journals)); } catch (e) {} }
             }
           }
         } catch (e) {
@@ -1659,6 +1699,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateAcademicYearsAndSync((prev) => prev.filter((ay) => ay.status === 'aktif'));
       updateSchedulesAndSync([]);
       updateAttendanceRecordsAndSync({});
+      updateJournalsAndSync([]);
     }
   };
   const importSchedules = (items: ScheduleItem[]) => updateSchedulesAndSync((prev) => [...prev, ...items]);
@@ -1668,6 +1709,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const otherClassesSchedules = prev.filter((s) => s.classId !== classId);
       return [...otherClassesSchedules, ...items];
     });
+  };
+
+  // Jurnal Mengajar Handlers
+  const addJournal = (journal: TeachingJournal) => {
+    updateJournalsAndSync((prev) => [journal, ...prev]);
+  };
+
+  const updateJournal = (journal: TeachingJournal) => {
+    updateJournalsAndSync((prev) => prev.map((j) => (j.id === journal.id ? journal : j)));
+  };
+
+  const deleteJournal = (id: string) => {
+    updateJournalsAndSync((prev) => prev.filter((j) => j.id !== id));
   };
 
   const resetAllData = async () => {
@@ -1686,6 +1740,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateAcademicYearsAndSync(INITIAL_ACADEMIC_YEARS);
     updateSchedulesAndSync(INITIAL_SCHEDULE);
     updateAttendanceRecordsAndSync({});
+    updateJournalsAndSync(INITIAL_JOURNALS);
     updateUserAccountsAndSync(INITIAL_USER_ACCOUNTS);
     setCurrentPeriod(1);
     setIsSimulatedTime(false);
@@ -1825,6 +1880,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         importSchedules,
         importClassSchedules,
         resetAllData,
+        journals,
+        addJournal,
+        updateJournal,
+        deleteJournal,
       }}
     >
       {children}

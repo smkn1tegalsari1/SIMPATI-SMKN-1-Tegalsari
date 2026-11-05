@@ -149,6 +149,27 @@ export interface UserAccount {
   lastLogin?: string;
 }
 
+export interface TeachingJournal {
+  id: string;
+  date: string; // format YYYY-MM-DD atau DD/MM/YYYY
+  teacherId: string;
+  teacherName: string;
+  teacherCode?: string;
+  classId?: string;
+  className: string;
+  roomId?: string;
+  roomName: string;
+  subjectCode: string;
+  subjectName: string;
+  startPeriod: number;
+  endPeriod: number;
+  timeRange?: string; // contoh: "06:45 - 13:00"
+  topic: string; // Materi *
+  notes?: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
 export interface CurrentUser {
   id: string;
   name: string;
@@ -166,6 +187,7 @@ export type ActiveMenu =
   | 'dashboard'
   | 'monitoring'
   | 'pembelajaran_saya'
+  | 'jurnal_mengajar'
   | 'guru_piket'
   | 'dashboard_pimpinan'
   | 'data_master'

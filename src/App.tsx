@@ -10,6 +10,7 @@ import { DashboardPimpinanView } from './components/pimpinan/DashboardPimpinanVi
 import { DataMasterView } from './components/master/DataMasterView';
 import { LaporanView } from './components/laporan/LaporanView';
 import { ManajemenAkunView } from './components/manajemen/ManajemenAkunView';
+import { JurnalMengajarView } from './components/jurnal/JurnalMengajarView';
 import { ModeTVSekolahView } from './components/tv/ModeTVSekolahView';
 import { PublicNavbar } from './components/layout/PublicNavbar';
 import { LoginPage } from './components/auth/LoginPage';
@@ -48,6 +49,7 @@ const MainAppContent: React.FC = () => {
   const isMenuAllowed = (): boolean => {
     if (currentUser.role === 'admin') return true;
     if (activeMenu === 'dashboard' || activeMenu === 'monitoring') return true;
+    if (activeMenu === 'jurnal_mengajar') return true;
     if (activeMenu === 'pembelajaran_saya') return currentUser.role === 'guru';
     if (activeMenu === 'guru_piket') {
       return currentUser.role === 'piket' || (currentUser.role === 'guru' && currentUser.isPiketToday === true);
@@ -111,6 +113,7 @@ const MainAppContent: React.FC = () => {
               {activeMenu === 'dashboard' && <DashboardView />}
               {activeMenu === 'monitoring' && <MonitoringView />}
               {activeMenu === 'pembelajaran_saya' && <PembelajaranSayaView />}
+              {activeMenu === 'jurnal_mengajar' && <JurnalMengajarView />}
               {activeMenu === 'guru_piket' && <PapanGuruPiketView />}
               {activeMenu === 'dashboard_pimpinan' && <DashboardPimpinanView />}
               {activeMenu === 'data_master' && <DataMasterView />}
