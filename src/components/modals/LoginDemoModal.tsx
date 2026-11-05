@@ -29,7 +29,7 @@ export const LoginDemoModal: React.FC<LoginDemoModalProps> = ({ isOpen, onClose 
 
   if (!isOpen) return null;
 
-  const handleFormLogin = (e: React.FormEvent) => {
+  const handleFormLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -45,7 +45,7 @@ export const LoginDemoModal: React.FC<LoginDemoModalProps> = ({ isOpen, onClose 
     }
 
     setIsLoading(true);
-    const res = loginWithCredentials(userClean, passwordInput);
+    const res = await loginWithCredentials(userClean, passwordInput);
     setIsLoading(false);
 
     if (res.success) {

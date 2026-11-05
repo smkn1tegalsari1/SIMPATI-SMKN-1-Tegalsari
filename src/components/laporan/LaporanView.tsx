@@ -5,27 +5,26 @@ import {
   Printer,
   Download,
   Calendar,
-  Filter,
-  CheckCircle2,
   Building,
   CalendarDays,
   Clock,
-  Sparkles,
+  CheckCircle2,
 } from 'lucide-react';
+import { ScheduleLessonStatus } from '../../types';
+import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 
 export const LaporanView: React.FC = () => {
   const {
     schedules,
-    attendanceRecords,
     currentDateString,
     currentTimeString,
     currentDateOnlyString,
     semesterString,
     effectiveWeekType,
-    realtimeWeekType,
     teachers,
     departments,
     classes,
+    getScheduleStatus,
   } = useApp();
 
   const [filterDept, setFilterDept] = useState<string>('all');
@@ -42,18 +41,11 @@ export const LaporanView: React.FC = () => {
       if (itemWeek !== 'ALL' && itemWeek !== filterWeek) return false;
     }
 
-    const rec = attendanceRecords[s.id];
     const itemDept = s.department || classes.find((c) => c.id === s.classId)?.department || 'UMUM';
     const matchDept = filterDept === 'all' || itemDept.toUpperCase() === filterDept.toUpperCase();
 
-    let matchStatus = true;
-    if (filterStatus === 'hadir') {
-      matchStatus = rec?.piketConfirmation?.status === 'terverifikasi_hadir';
-    } else if (filterStatus === 'izin') {
-      matchStatus = rec?.teacherConfirmation?.status === 'izin' || rec?.teacherConfirmation?.status === 'sakit';
-    } else if (filterStatus === 'inval') {
-      matchStatus = !!rec?.piketConfirmation?.substituteTeacherName;
-    }
+    const status = getScheduleStatus(s);
+    const matchStatus = filterStatus === 'all' || status === filterStatus;
 
     return matchDept && matchStatus;
   });
@@ -72,14 +64,11 @@ export const LaporanView: React.FC = () => {
       'Mata Pelajaran',
       'Kelas',
       'Ruang',
-      'Status Guru',
-      'Validasi Piket',
-      'Materi Jurnal',
-      'Guru Pengganti',
+      'Status Jadwal',
     ];
     const rows = filtered.map((s) => {
-      const rec = attendanceRecords[s.id];
       const t = teachers.find((tc) => tc.id === s.teacherId);
+      const status = getScheduleStatus(s);
       const weekLabel =
         s.weekType === 'P10_PROD_P11_NORM'
           ? 'Pekan K10 Prod & K11 Norm'
@@ -96,10 +85,7 @@ export const LaporanView: React.FC = () => {
         `"${s.subjectName}"`,
         `"${s.className}"`,
         `"${s.roomName}"`,
-        `"${rec?.teacherConfirmation?.status || 'Belum'}"`,
-        `"${rec?.piketConfirmation?.status || 'Belum'}"`,
-        `"${rec?.teacherConfirmation?.journalTopic || '-'}"`,
-        `"${rec?.piketConfirmation?.substituteTeacherName || '-'}"`,
+        `"${status}"`,
       ].join(',');
     });
 
@@ -107,7 +93,7 @@ export const LaporanView: React.FC = () => {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `rekap_kbm_smkn1tegalsari_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `rekap_jadwal_kbm_smkn1tegalsari_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -123,24 +109,24 @@ export const LaporanView: React.FC = () => {
             <span>Dokumentasi & Administrasi Sekolah</span>
           </div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight mt-1">
-            Laporan Rekapitulasi KBM Terintegrasi
+            Laporan Rekapitulasi Jadwal Pembelajaran
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Unduh format digital atau cetak berita acara resmi kehadiran guru dan pemantauan piket.
+            Unduh format digital atau cetak berita acara resmi status pelaksanaan jadwal KBM (Berlangsung, Selesai, Terjadwal).
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
           <button
             onClick={handleExportCSV}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl shadow-2xs transition"
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl shadow-2xs transition cursor-pointer"
           >
             <Download className="w-3.5 h-3.5 text-cyan-600" />
             <span>Ekspor CSV</span>
           </button>
           <button
             onClick={handlePrint}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-cyan-700 hover:bg-cyan-800 rounded-xl shadow-xs transition"
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-cyan-700 hover:bg-cyan-800 rounded-xl shadow-xs transition cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Cetak Berita Acara (PDF)</span>
@@ -148,100 +134,99 @@ export const LaporanView: React.FC = () => {
         </div>
       </div>
 
-      {/* Filter Bar (no-print) */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs flex flex-wrap items-center justify-between gap-4 no-print">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-semibold text-slate-600">Jurusan:</span>
-            <select
-              value={filterDept}
-              onChange={(e) => setFilterDept(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 outline-none"
-            >
-              <option value="all">Semua Program Keahlian ({schedules.length})</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.code}>
-                  {d.code} - {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-semibold text-slate-600">Rotasi Pekan:</span>
-            <select
-              value={filterWeek}
-              onChange={(e) => setFilterWeek(e.target.value as any)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 outline-none"
-            >
-              <option value="ACTIVE">
-                ⚡ Pekan Aktif ({effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})
-              </option>
-              <option value="P10_PROD_P11_NORM">🟢 Pekan K10 Prod & K11 Norm</option>
-              <option value="P10_NORM_P11_PROD">🟣 Pekan K10 Norm & K11 Prod</option>
-              <option value="ALL">🌐 Semua Pekan (Gabungan)</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <span className="font-semibold text-slate-600">Status:</span>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 outline-none"
-            >
-              <option value="all">Semua Status</option>
-              <option value="hadir">Terverifikasi Hadir</option>
-              <option value="izin">Izin / Sakit</option>
-              <option value="inval">Didampingi Inval</option>
-            </select>
-          </div>
+      {/* Filters Bar */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex flex-wrap items-center gap-4 text-xs no-print">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="w-4 h-4 text-cyan-700 shrink-0" />
+          <span className="font-semibold text-slate-600">Rotasi Pekan:</span>
+          <select
+            value={filterWeek}
+            onChange={(e) => setFilterWeek(e.target.value as any)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none cursor-pointer"
+          >
+            <option value="ACTIVE">Pekan Aktif Real-Time ({effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})</option>
+            <option value="P10_PROD_P11_NORM">Pekan K10 Prod & K11 Norm</option>
+            <option value="P10_NORM_P11_PROD">Pekan K10 Norm & K11 Prod</option>
+            <option value="ALL">Semua Pekan (Gabungan)</option>
+          </select>
         </div>
 
-        <div className="text-xs text-slate-500 font-medium">
-          Ditemukan <span className="font-bold text-slate-800">{filtered.length}</span> baris catatan
+        <div className="flex items-center gap-2">
+          <Building className="w-4 h-4 text-slate-400" />
+          <span className="font-semibold text-slate-600">Jurusan:</span>
+          <select
+            value={filterDept}
+            onChange={(e) => setFilterDept(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none cursor-pointer"
+          >
+            <option value="all">Semua Program Keahlian</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.code}>
+                {d.code} - {d.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-slate-600">Status Jadwal:</span>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none cursor-pointer"
+          >
+            <option value="all">Semua Status</option>
+            <option value="Berlangsung">🟢 Berlangsung</option>
+            <option value="Selesai">⚪ Selesai</option>
+            <option value="Terjadwal">🔵 Terjadwal</option>
+          </select>
         </div>
       </div>
 
-      {/* Printable Report Sheet */}
-      <div className="bg-white rounded-2xl border border-slate-200/90 p-8 shadow-xs space-y-6">
+      {/* Printable Sheet View */}
+      <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-xs print:p-0 print:border-none print:shadow-none space-y-6">
         {/* Kop Surat Sekolah */}
-        <div className="text-center border-b-2 border-slate-800 pb-5 space-y-1">
-          <h2 className="text-base font-extrabold text-slate-900 tracking-wide uppercase">
-            PEMERINTAH PROVINSI JAWA TIMUR · DINAS PENDIDIKAN
+        <div className="border-b-2 border-slate-900 pb-4 text-center space-y-1">
+          <p className="text-xs uppercase tracking-widest font-bold text-slate-600">
+            Pemerintah Provinsi Jawa Timur · Dinas Pendidikan
+          </p>
+          <h2 className="text-lg md:text-xl font-black text-slate-950 uppercase tracking-tight">
+            SMK Negeri 1 Tegalsari Banyuwangi
           </h2>
-          <h3 className="text-xl font-black text-slate-900 tracking-tight uppercase">
-            SEKOLAH MENENGAH KEJURUAN NEGERI 1 TEGALSARI
-          </h3>
-          <p className="text-xs text-slate-600">
-            Jl. KH. Syafa'at No. 1, Blokagung, Tegalsari, Kabupaten Banyuwangi, Jawa Timur 68485
+          <p className="text-[11px] text-slate-500">
+            Jl. KH. Syafa'at No. 1, Dusun Krajan, Blokagung, Kec. Tegalsari, Kabupaten Banyuwangi, Jawa Timur 68485
           </p>
-          <p className="text-[11px] font-bold text-cyan-800 uppercase tracking-widest pt-1">
-            BERITA ACARA & REKAPITULASI PELAKSANAAN PEMBELAJARAN (SIMPATI)
-          </p>
-          <p className="text-xs text-slate-600 flex flex-wrap items-center justify-center gap-2 pt-1">
-            <span>Tanggal & Waktu Cetak: <strong>{currentDateString} · {currentTimeString}</strong></span>
-            <span>·</span>
-            <span>{semesterString}</span>
-            <span>·</span>
-            <span className="font-bold text-cyan-800 bg-cyan-50 px-2 py-0.5 rounded border border-cyan-200">
-              Rotasi:{' '}
-              {filterWeek === 'ACTIVE'
-                ? `Pekan Aktif Real-Time (${effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})`
-                : filterWeek === 'P10_PROD_P11_NORM'
-                ? 'Pekan K10 Produktif & K11 Normatif Adaptif'
-                : filterWeek === 'P10_NORM_P11_PROD'
-                ? 'Pekan K10 Normatif Adaptif & K11 Produktif'
-                : 'Semua Pekan'}
-            </span>
+          <p className="text-[10px] text-slate-400 font-mono">
+            NPSN: 20566371 · Website: smkn1tegalsari.sch.id · Email: info@smkn1tegalsari.sch.id
           </p>
         </div>
 
-        {/* Data Table */}
+        {/* Header Dokumen Berita Acara */}
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-200 pb-3">
+          <div>
+            <span className="font-extrabold text-slate-900 block uppercase">
+              BERITA ACARA & REKAPITULASI JADWAL PEMBELAJARAN
+            </span>
+            <span className="text-slate-500">
+              Periode Waktu: {currentDateString} ({currentTimeString})
+            </span>
+          </div>
+
+          <div className="text-right">
+            <span className="font-bold text-slate-700 block">
+              {semesterString}
+            </span>
+            <span className="text-slate-500 text-[11px]">
+              Rotasi: {filterWeek === 'P10_PROD_P11_NORM' ? 'K10 Prod & K11 Norm' : filterWeek === 'P10_NORM_P11_PROD' ? 'K10 Norm & K11 Prod' : 'Semua Pekan'}
+            </span>
+          </div>
+        </div>
+
+        {/* Tabel Data Rekapitulasi */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border border-slate-300">
             <thead>
-              <tr className="bg-slate-100 border-b border-slate-300 text-slate-800 font-bold uppercase text-[11px]">
+              <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] border-b border-slate-300">
                 <th className="py-2.5 px-2 border-r border-slate-300 text-center">JAM</th>
                 <th className="py-2.5 px-3 border-r border-slate-300">WAKTU</th>
                 <th className="py-2.5 px-3 border-r border-slate-300">ROTASI PEKAN</th>
@@ -249,22 +234,19 @@ export const LaporanView: React.FC = () => {
                 <th className="py-2.5 px-3 border-r border-slate-300">MATA PELAJARAN</th>
                 <th className="py-2.5 px-2 border-r border-slate-300">KELAS</th>
                 <th className="py-2.5 px-2 border-r border-slate-300">RUANG</th>
-                <th className="py-2.5 px-3 border-r border-slate-300">TOPIK MATERI JURNAL</th>
-                <th className="py-2.5 px-2 border-r border-slate-300 text-center">GURU</th>
-                <th className="py-2.5 px-2 border-r border-slate-300 text-center">PIKET</th>
-                <th className="py-2.5 px-3">INVAL / KET</th>
+                <th className="py-2.5 px-3 text-center">STATUS JADWAL</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filtered.map((item) => {
-                const rec = attendanceRecords[item.id];
+                const status = getScheduleStatus(item);
                 return (
                   <tr key={item.id} className="text-slate-800">
                     <td className="py-2 px-2 text-center font-bold border-r border-slate-300 tabular-nums">
                       {item.periodIndex}
                     </td>
                     <td className="py-2 px-3 border-r border-slate-300 font-mono text-[11px] tabular-nums whitespace-nowrap">
-                      {item.timeRange}
+                      {item.timeRange || `${item.startTime} - ${item.endTime}`}
                     </td>
                     <td className="py-2 px-3 border-r border-slate-300 text-[11px] whitespace-nowrap">
                       {item.weekType === 'P10_PROD_P11_NORM' ? (
@@ -293,17 +275,8 @@ export const LaporanView: React.FC = () => {
                     <td className="py-2 px-2 border-r border-slate-300 text-[11px] whitespace-nowrap">
                       {item.roomName}
                     </td>
-                    <td className="py-2 px-3 border-r border-slate-300 text-[11px] text-slate-600">
-                      {rec?.teacherConfirmation?.journalTopic || 'Pokok bahasan KBM'}
-                    </td>
-                    <td className="py-2 px-2 border-r border-slate-300 text-center font-semibold text-[11px]">
-                      {rec?.teacherConfirmation?.status === 'hadir' ? 'Hadir' : rec?.teacherConfirmation?.status === 'izin' ? 'Izin' : '-'}
-                    </td>
-                    <td className="py-2 px-2 border-r border-slate-300 text-center font-semibold text-[11px]">
-                      {rec?.piketConfirmation?.status === 'terverifikasi_hadir' ? 'Valid' : '-'}
-                    </td>
-                    <td className="py-2 px-3 text-[11px] text-slate-600">
-                      {rec?.piketConfirmation?.substituteTeacherName ? `Inval: ${rec.piketConfirmation.substituteTeacherName}` : '-'}
+                    <td className="py-2 px-3 text-center whitespace-nowrap">
+                      <ScheduleStatusBadge status={status} size="sm" />
                     </td>
                   </tr>
                 );

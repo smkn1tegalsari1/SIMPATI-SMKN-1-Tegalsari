@@ -11,16 +11,37 @@ import { DataMasterView } from './components/master/DataMasterView';
 import { LaporanView } from './components/laporan/LaporanView';
 import { ManajemenAkunView } from './components/manajemen/ManajemenAkunView';
 import { ModeTVSekolahView } from './components/tv/ModeTVSekolahView';
-import { LoginDemoModal } from './components/modals/LoginDemoModal';
+import { PublicNavbar } from './components/layout/PublicNavbar';
+import { LoginPage } from './components/auth/LoginPage';
 import { ShieldAlert, ArrowLeft } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { activeMenu, setActiveMenu, currentUser } = useApp();
-  const [isDemoLoginOpen, setIsDemoLoginOpen] = useState(false);
+  const { activeMenu, setActiveMenu, currentUser, isAuthenticated } = useApp();
+  const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
 
-  // TV mode takes over the entire viewport for digital signage
+  // Mode TV layar penuh
   if (activeMenu === 'mode_tv') {
     return <ModeTVSekolahView />;
+  }
+
+  // Tampilan pertama ketika masuk website (belum login):
+  // Menampilkan Monitoring Pembelajaran secara langsung dengan menu Login untuk masuk aplikasi
+  if (!isAuthenticated) {
+    if (showLoginModal) {
+      return <LoginPage onBackToMonitoring={() => setShowLoginModal(false)} />;
+    }
+
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] flex flex-col text-slate-900 font-sans antialiased">
+        <PublicNavbar
+          onOpenLogin={() => setShowLoginModal(true)}
+          onOpenTVMode={() => setActiveMenu('mode_tv')}
+        />
+        <main className="flex-1 pb-16">
+          <MonitoringView />
+        </main>
+      </div>
+    );
   }
 
   // Verifikasi otorisasi hak akses menu sesuai peran akun yang login
@@ -51,11 +72,11 @@ const MainAppContent: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex text-slate-900 font-sans antialiased">
       {/* Sidebar Navigation */}
-      <Sidebar onOpenDemoLogin={() => setIsDemoLoginOpen(true)} />
+      <Sidebar />
 
       {/* Main View Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <Header onOpenDemoLogin={() => setIsDemoLoginOpen(true)} />
+        <Header />
 
         <main className="flex-1 pb-16">
           {!isMenuAllowed() ? (
@@ -78,7 +99,7 @@ const MainAppContent: React.FC = () => {
               <div className="pt-2">
                 <button
                   onClick={() => setActiveMenu(defaultUserMenu)}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold bg-[#0B1E2E] hover:bg-slate-800 text-white rounded-xl shadow-xs transition"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold bg-[#0B1E2E] hover:bg-slate-800 text-white rounded-xl shadow-xs transition cursor-pointer"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   <span>Kembali ke Menu Utama Anda</span>
@@ -99,12 +120,6 @@ const MainAppContent: React.FC = () => {
           )}
         </main>
       </div>
-
-      {/* Login Demo Modal */}
-      <LoginDemoModal
-        isOpen={isDemoLoginOpen}
-        onClose={() => setIsDemoLoginOpen(false)}
-      />
     </div>
   );
 };

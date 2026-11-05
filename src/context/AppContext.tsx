@@ -15,6 +15,7 @@ import {
   AccountRole,
   DayNameIndo,
   ScheduleWeekType,
+  ScheduleLessonStatus,
 } from '../types';
 import {
   INITIAL_TEACHERS,
@@ -35,11 +36,15 @@ import {
   isScheduleMatchingWeek,
 } from '../data/scheduleWeeks';
 
-interface StatsSummary {
+export interface StatsSummary {
   totalJadwal: number;
   guruMengajar: number;
   sedangBerlangsung: number;
   terlaksana: number;
+  terjadwal: number;
+  berlangsungCount: number;
+  selesaiCount: number;
+  terjadwalCount: number;
   belumKonfirmasi: number;
   tidakHadir: number;
 }
@@ -54,6 +59,9 @@ interface AppContextType {
   schedules: ScheduleItem[];
   attendanceRecords: Record<string, AttendanceRecord>;
   currentUser: CurrentUser;
+  isAuthenticated: boolean;
+  isServerConnected: boolean;
+  logout: () => void;
   activeMenu: ActiveMenu;
   currentPeriod: number;
   currentTimeString: string;
@@ -73,6 +81,7 @@ interface AppContextType {
   getWeekTypeLabel: (w?: string) => string;
   getWeekTypeShortLabel: (w?: string) => string;
   isScheduleMatchingCurrentWeek: (item: ScheduleItem) => boolean;
+  getScheduleStatus: (schedule: ScheduleItem) => ScheduleLessonStatus;
   
   // Actions
   setActiveMenu: (menu: ActiveMenu) => void;
@@ -103,7 +112,7 @@ interface AppContextType {
   deleteUserAccount: (id: string) => void;
   syncAccountsFromTeachers: () => { created: number; updated: number; message: string };
   updatePiketDays: (accountId: string, days: string[]) => void;
-  loginWithCredentials: (username: string, password: string) => { success: boolean; message: string; user?: CurrentUser };
+  loginWithCredentials: (username: string, password: string) => Promise<{ success: boolean; message: string; user?: CurrentUser }>;
 
   // Master CRUD
   addTeacher: (teacher: Teacher) => void;
@@ -153,6 +162,7 @@ interface AppContextType {
   bulkDeleteSchedules: (ids: string[]) => void;
   bulkUpdateSchedules: (ids: string[], updates: Partial<ScheduleItem>) => void;
   clearAllSchedules: () => void;
+  clearTableData: (tableKey: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua') => void;
   importSchedules: (items: ScheduleItem[]) => void;
   importClassSchedules: (classId: string, items: ScheduleItem[]) => void;
   resetAllData: () => void;
@@ -198,6 +208,51 @@ export const getPeriodFromTime = (d: Date): number => {
   return 1;
 };
 
+// Helper penetapan 3 status jadwal pelajaran: Berlangsung | Selesai | Terjadwal
+export const getScheduleLessonStatus = (
+  schedule: ScheduleItem,
+  currentDayIndex: number,
+  currentPeriod: number,
+  currentDayName?: string
+): ScheduleLessonStatus => {
+  // Bila weekend (Sabtu/Minggu), fallback ke hari Selasa (2) tempat sampel jadwal aktif berada
+  const effectiveDayIndex = currentDayIndex >= 6 ? 2 : currentDayIndex;
+
+  let schedDay = schedule.dayOfWeek;
+  const dayNameLower = (schedule.dayName || '').trim().toLowerCase();
+  if (!schedDay && dayNameLower) {
+    const dayMap: Record<string, number> = {
+      senin: 1, selasa: 2, rabu: 3, kamis: 4, jumat: 5, sabtu: 6, minggu: 7
+    };
+    schedDay = dayMap[dayNameLower] || 1;
+  }
+
+  const periodNum = typeof schedule.periodIndex === 'number'
+    ? schedule.periodIndex
+    : parseInt(String(schedule.periodIndex), 10);
+
+  const isToday =
+    (schedDay && schedDay === effectiveDayIndex) ||
+    (currentDayName && dayNameLower && dayNameLower === currentDayName.trim().toLowerCase());
+
+  if (isToday) {
+    if (isNaN(periodNum)) return 'Terjadwal';
+    const activePeriod = currentPeriod > 0 ? currentPeriod : 1;
+    if (periodNum === activePeriod) {
+      return 'Berlangsung';
+    } else if (periodNum < activePeriod) {
+      return 'Selesai';
+    } else {
+      return 'Terjadwal';
+    }
+  }
+
+  if (schedDay < effectiveDayIndex) {
+    return 'Selesai';
+  }
+  return 'Terjadwal';
+};
+
 const STORAGE_KEY = 'simpati_smkn1tegalsari_v3';
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -206,7 +261,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Master state with localStorage persistence
   const [teachers, setTeachers] = useState<Teacher[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_teachers`);
-    return saved ? JSON.parse(saved) : INITIAL_TEACHERS;
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_TEACHERS;
   });
 
   const [subjects, setSubjects] = useState<Subject[]>(() => {
@@ -226,12 +289,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     const saved = localStorage.getItem(`${STORAGE_KEY}_subjects`);
-    if (saved) {
+    if (saved !== null) {
       try {
         const parsed: any[] = JSON.parse(saved);
-        return parsed.map(normalizeCategory);
+        if (Array.isArray(parsed)) return parsed.map(normalizeCategory);
       } catch (e) {
-        return INITIAL_SUBJECTS;
+        return [];
       }
     }
     return INITIAL_SUBJECTS;
@@ -239,17 +302,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [classes, setClasses] = useState<SchoolClass[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_classes`);
-    if (saved) {
+    if (saved !== null) {
       try {
-        const parsed: SchoolClass[] = JSON.parse(saved);
-        const existingIds = new Set(parsed.map((c) => c.id));
-        const missing = INITIAL_CLASSES.filter((c) => !existingIds.has(c.id));
-        if (missing.length > 0) {
-          return [...parsed, ...missing];
-        }
-        return parsed;
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
-        // fallback
+        return [];
       }
     }
     return INITIAL_CLASSES;
@@ -257,32 +315,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [rooms, setRooms] = useState<Room[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_rooms`);
-    return saved ? JSON.parse(saved) : INITIAL_ROOMS;
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_ROOMS;
   });
 
   const [departments, setDepartments] = useState<Department[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_departments`);
-    return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_DEPARTMENTS;
   });
 
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_academic_years`);
-    return saved ? JSON.parse(saved) : INITIAL_ACADEMIC_YEARS;
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_ACADEMIC_YEARS;
   });
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_schedules`);
-    if (saved) {
+    if (saved !== null) {
       try {
-        const parsed: ScheduleItem[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const hasWeekTypes = parsed.some((s) => s.weekType);
-          if (hasWeekTypes) {
-            return parsed;
-          }
-        }
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
-        // fallback
+        return [];
       }
     }
     return INITIAL_SCHEDULE;
@@ -290,24 +367,94 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [attendanceRecords, setAttendanceRecords] = useState<Record<string, AttendanceRecord>>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_attendance`);
-    return saved ? JSON.parse(saved) : {};
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed === 'object' && parsed !== null) return parsed;
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
   });
 
   const [userAccounts, setUserAccounts] = useState<UserAccount[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_user_accounts`);
-    return saved ? JSON.parse(saved) : INITIAL_USER_ACCOUNTS;
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return [];
+      }
+    }
+    return INITIAL_USER_ACCOUNTS;
   });
 
-  const [currentUser, setCurrentUser] = useState<CurrentUser>({
-    id: 'usr-admin',
-    name: 'Administrator SIMPATI',
-    role: 'admin',
-    title: 'Super Admin Sistem',
-    username: 'admin',
-    piketDays: [],
+  const [clientId] = useState<string>(() => `client_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`);
+  const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
+  const isRemoteUpdatingRef = React.useRef<boolean>(false);
+  const isInitialMount = React.useRef<boolean>(true);
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const savedSession = localStorage.getItem(`${STORAGE_KEY}_session`);
+      return !!savedSession;
+    } catch {
+      return false;
+    }
   });
 
-  const [activeMenu, setActiveMenu] = useState<ActiveMenu>('dashboard');
+  const [currentUser, setCurrentUser] = useState<CurrentUser>(() => {
+    try {
+      const savedSession = localStorage.getItem(`${STORAGE_KEY}_session`);
+      if (savedSession) {
+        const parsed = JSON.parse(savedSession);
+        if (parsed?.user) return parsed.user;
+      }
+    } catch {}
+    return {
+      id: '',
+      name: '',
+      role: 'guru',
+      title: '',
+      username: '',
+      piketDays: [],
+    };
+  });
+
+  const logout = () => {
+    localStorage.removeItem(`${STORAGE_KEY}_session`);
+    setIsAuthenticated(false);
+    setCurrentUser({
+      id: '',
+      name: '',
+      role: 'guru',
+      title: '',
+      username: '',
+      piketDays: [],
+    });
+    setActiveMenu('monitoring');
+  };
+
+  const syncToServer = async (key: string, data: any) => {
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key,
+          data,
+          updatedBy: currentUser.name || 'Pengguna SIMPATI',
+          clientId,
+        }),
+      });
+    } catch (err) {
+      console.warn('[SIMPATI Sync] Gagal sinkronisasi data ke server:', err);
+    }
+  };
+
+  const [activeMenu, setActiveMenu] = useState<ActiveMenu>('monitoring');
   const [isSimulatedTime, setIsSimulatedTime] = useState<boolean>(false);
   
   // Real-time state synchronized with user's laptop clock
@@ -352,42 +499,233 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const activeAy = academicYears.find((ay) => ay.status === 'aktif') || academicYears[0];
   const semesterString = activeAy ? `${activeAy.name}` : 'Semester Ganjil · 2026/2027';
 
-  // Save to localStorage
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(teachers));
-  }, [teachers]);
+  // Helper fungsi mutasi data: menyimpan langsung ke state, localStorage, dan sinkron ke server terpusat secara konsisten tanpa race-condition
+  const updateTeachersAndSync = (updater: Teacher[] | ((prev: Teacher[]) => Teacher[])) => {
+    setTeachers((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('teachers', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(subjects));
-  }, [subjects]);
+  const updateSubjectsAndSync = (updater: Subject[] | ((prev: Subject[]) => Subject[])) => {
+    setSubjects((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('subjects', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(classes));
-  }, [classes]);
+  const updateClassesAndSync = (updater: SchoolClass[] | ((prev: SchoolClass[]) => SchoolClass[])) => {
+    setClasses((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('classes', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(rooms));
-  }, [rooms]);
+  const updateDepartmentsAndSync = (updater: Department[] | ((prev: Department[]) => Department[])) => {
+    setDepartments((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('departments', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(departments));
-  }, [departments]);
+  const updateRoomsAndSync = (updater: Room[] | ((prev: Room[]) => Room[])) => {
+    setRooms((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('rooms', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(academicYears));
-  }, [academicYears]);
+  const updateAcademicYearsAndSync = (updater: AcademicYear[] | ((prev: AcademicYear[]) => AcademicYear[])) => {
+    setAcademicYears((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('academicYears', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(schedules));
-  }, [schedules]);
+  const updateSchedulesAndSync = (updater: ScheduleItem[] | ((prev: ScheduleItem[]) => ScheduleItem[])) => {
+    setSchedules((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('schedules', next);
+      return next;
+    });
+  };
 
-  useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(attendanceRecords));
-  }, [attendanceRecords]);
+  const updateAttendanceRecordsAndSync = (updater: Record<string, AttendanceRecord> | ((prev: Record<string, AttendanceRecord>) => Record<string, AttendanceRecord>)) => {
+    setAttendanceRecords((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('attendanceRecords', next);
+      return next;
+    });
+  };
 
+  const updateUserAccountsAndSync = (updater: UserAccount[] | ((prev: UserAccount[]) => UserAccount[])) => {
+    setUserAccounts((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(next));
+      } catch (e) {}
+      syncToServer('userAccounts', next);
+      return next;
+    });
+  };
+
+  // Hubungkan ke Server Terpusat: Ambil state awal dan dengarkan event SSE real-time
   useEffect(() => {
-    localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(userAccounts));
-  }, [userAccounts]);
+    let isMounted = true;
+
+    fetch('/api/state')
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success && json.data && isMounted) {
+          const s = json.data;
+          if (Array.isArray(s.teachers)) {
+            setTeachers(s.teachers);
+            try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {}
+          }
+          if (Array.isArray(s.subjects)) {
+            setSubjects(s.subjects);
+            try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {}
+          }
+          if (Array.isArray(s.classes)) {
+            setClasses(s.classes);
+            try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {}
+          }
+          if (Array.isArray(s.departments)) {
+            setDepartments(s.departments);
+            try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {}
+          }
+          if (Array.isArray(s.rooms)) {
+            setRooms(s.rooms);
+            try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {}
+          }
+          if (Array.isArray(s.academicYears)) {
+            setAcademicYears(s.academicYears);
+            try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {}
+          }
+          if (Array.isArray(s.schedules)) {
+            setSchedules(s.schedules);
+            try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {}
+          }
+          if (s.attendanceRecords && typeof s.attendanceRecords === 'object') {
+            setAttendanceRecords(s.attendanceRecords);
+            try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {}
+          }
+          if (Array.isArray(s.userAccounts)) {
+            setUserAccounts(s.userAccounts);
+            try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(s.userAccounts)); } catch (e) {}
+          }
+          if (s.activeWeekFilter) {
+            setActiveWeekFilterState(s.activeWeekFilter);
+            try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {}
+          }
+          setIsServerConnected(true);
+        }
+      })
+      .catch((err) => {
+        console.warn('[SIMPATI] Server state awal tidak dapat diambil:', err);
+      });
+
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/events');
+      eventSource.onopen = () => {
+        if (isMounted) setIsServerConnected(true);
+      };
+      eventSource.onmessage = (event) => {
+        try {
+          const payloadData = JSON.parse(event.data);
+          if (payloadData.type === 'state_updated' && payloadData.payload) {
+            const { key, data, originClientId } = payloadData.payload;
+            if (originClientId === clientId) return; // Abaikan pantulan dari tab/laptop sendiri
+
+            if (key === 'teachers' && Array.isArray(data)) {
+              setTeachers(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'subjects' && Array.isArray(data)) {
+              setSubjects(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'classes' && Array.isArray(data)) {
+              setClasses(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'departments' && Array.isArray(data)) {
+              setDepartments(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'rooms' && Array.isArray(data)) {
+              setRooms(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'academicYears' && Array.isArray(data)) {
+              setAcademicYears(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'schedules' && Array.isArray(data)) {
+              setSchedules(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'attendanceRecords' && typeof data === 'object' && data !== null) {
+              setAttendanceRecords(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'userAccounts' && Array.isArray(data)) {
+              setUserAccounts(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(data)); } catch (e) {}
+            } else if (key === 'activeWeekFilter' && typeof data === 'string') {
+              setActiveWeekFilterState(data as any);
+              try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, data); } catch (e) {}
+            } else if (!key && data) {
+              if (Array.isArray(data.teachers)) { setTeachers(data.teachers); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(data.teachers)); } catch (e) {} }
+              if (Array.isArray(data.subjects)) { setSubjects(data.subjects); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(data.subjects)); } catch (e) {} }
+              if (Array.isArray(data.classes)) { setClasses(data.classes); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(data.classes)); } catch (e) {} }
+              if (Array.isArray(data.departments)) { setDepartments(data.departments); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data.departments)); } catch (e) {} }
+              if (Array.isArray(data.rooms)) { setRooms(data.rooms); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data.rooms)); } catch (e) {} }
+              if (Array.isArray(data.academicYears)) { setAcademicYears(data.academicYears); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data.academicYears)); } catch (e) {} }
+              if (Array.isArray(data.schedules)) { setSchedules(data.schedules); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data.schedules)); } catch (e) {} }
+              if (data.attendanceRecords && typeof data.attendanceRecords === 'object') { setAttendanceRecords(data.attendanceRecords); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data.attendanceRecords)); } catch (e) {} }
+              if (Array.isArray(data.userAccounts)) { setUserAccounts(data.userAccounts); try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(data.userAccounts)); } catch (e) {} }
+            }
+          }
+        } catch (e) {
+          console.error('[SIMPATI SSE] Parse error:', e);
+        }
+      };
+      eventSource.onerror = () => {
+        if (isMounted) setIsServerConnected(false);
+      };
+    } catch (e) {
+      console.warn('[SIMPATI] SSE error:', e);
+    }
+
+    return () => {
+      isMounted = false;
+      if (eventSource) eventSource.close();
+    };
+  }, [clientId]);
 
   // Live real-time clock & date updating automatically from laptop time every second
   useEffect(() => {
@@ -523,7 +861,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     journalNotes?: string,
     studentAbsence?: { sakit: number; izin: number; alpa: number; totalHadir: number }
   ) => {
-    setAttendanceRecords((prev) => {
+    updateAttendanceRecordsAndSync((prev) => {
       const existing = prev[scheduleId] || {
         scheduleId,
         date: new Date().toISOString().split('T')[0],
@@ -563,7 +901,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     substituteTeacherId?: string,
     assignedTask?: string
   ) => {
-    setAttendanceRecords((prev) => {
+    updateAttendanceRecordsAndSync((prev) => {
       const existing = prev[scheduleId] || {
         scheduleId,
         date: new Date().toISOString().split('T')[0],
@@ -613,11 +951,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // User Account CRUD & Guru Sync
   const addUserAccount = (account: UserAccount) => {
-    setUserAccounts((prev) => [...prev, account]);
+    updateUserAccountsAndSync((prev) => [...prev, account]);
   };
 
   const updateUserAccount = (account: UserAccount) => {
-    setUserAccounts((prev) => prev.map((a) => (a.id === account.id ? account : a)));
+    updateUserAccountsAndSync((prev) => prev.map((a) => (a.id === account.id ? account : a)));
     
     // Update active currentUser if it matches
     if (currentUser.id === account.id || (account.teacherId && currentUser.teacherId === account.teacherId)) {
@@ -635,7 +973,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Also sync to teacher if connected
     if (account.teacherId) {
       const isPiketToday = account.piketDays?.includes(currentDayName) || false;
-      setTeachers((prev) =>
+      updateTeachersAndSync((prev) =>
         prev.map((t) =>
           t.id === account.teacherId
             ? {
@@ -653,12 +991,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteUserAccount = (id: string) => {
-    setUserAccounts((prev) => prev.filter((a) => a.id !== id));
+    updateUserAccountsAndSync((prev) => prev.filter((a) => a.id !== id));
   };
 
   const updatePiketDays = (accountId: string, days: string[]) => {
     const isPiketToday = days.includes(currentDayName);
-    setUserAccounts((prev) =>
+    updateUserAccountsAndSync((prev) =>
       prev.map((a) => {
         if (a.id === accountId) {
           return {
@@ -673,7 +1011,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const targetAcc = userAccounts.find((a) => a.id === accountId);
     if (targetAcc && targetAcc.teacherId) {
-      setTeachers((prev) =>
+      updateTeachersAndSync((prev) =>
         prev.map((t) =>
           t.id === targetAcc.teacherId
             ? { ...t, piketDays: days, isPiketToday }
@@ -695,7 +1033,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let created = 0;
     let updated = 0;
 
-    setUserAccounts((prev) => {
+    updateUserAccountsAndSync((prev) => {
       const accounts = [...prev];
       const existingByTeacherId = new Map(accounts.filter((a) => a.teacherId).map((a) => [a.teacherId!, a]));
       const existingUsernames = new Set(accounts.map((a) => a.username.toLowerCase()));
@@ -754,7 +1092,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  const loginWithCredentials = (usernameInput: string, passwordInput: string) => {
+  const loginWithCredentials = async (
+    usernameInput: string,
+    passwordInput: string
+  ): Promise<{ success: boolean; message: string; user?: CurrentUser }> => {
+    // 1. Verifikasi dengan endpoint backend /api/auth/login
+    try {
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: usernameInput, password: passwordInput }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success && data.user) {
+        const u = data.user;
+        const isPiketToday = u.piketDays?.includes(currentDayName) || false;
+        const authUser: CurrentUser = {
+          ...u,
+          isPiketToday,
+        };
+        setCurrentUser(authUser);
+        setIsAuthenticated(true);
+        localStorage.setItem(`${STORAGE_KEY}_session`, JSON.stringify({ user: authUser, token: 'session-token' }));
+
+        if (authUser.role === 'admin') setActiveMenu('dashboard');
+        else if (authUser.role === 'pimpinan') setActiveMenu('dashboard_pimpinan');
+        else if (authUser.role === 'piket') setActiveMenu('guru_piket');
+        else setActiveMenu('pembelajaran_saya');
+
+        return {
+          success: true,
+          message: data.message || `Login berhasil! Selamat datang, ${authUser.name}.`,
+          user: authUser,
+        };
+      } else if (!resp.ok && data.message) {
+        return {
+          success: false,
+          message: data.message,
+        };
+      }
+    } catch (err) {
+      // Server offline / fallback ke verifikasi lokal
+    }
+
+    // 2. Verifikasi lokal terhadap userAccounts
     const trimmedUser = usernameInput.trim().toLowerCase();
     const matched = userAccounts.find(
       (acc) =>
@@ -767,14 +1148,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!matched) {
       return {
         success: false,
-        message: 'Username atau password salah! Silakan periksa kembali username dan password Anda.',
+        message: 'Username atau password salah! Pastikan akun telah didaftarkan oleh Admin.',
       };
     }
 
     if (matched.status === 'nonaktif') {
       return {
         success: false,
-        message: 'Akun Anda dinonaktifkan oleh administrator. Silakan hubungi bagian admin.',
+        message: 'Akun Anda dinonaktifkan oleh administrator. Silakan hubungi admin sekolah.',
       };
     }
 
@@ -802,12 +1183,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setCurrentUser(newUser);
+    setIsAuthenticated(true);
+    localStorage.setItem(`${STORAGE_KEY}_session`, JSON.stringify({ user: newUser, token: 'session-token' }));
 
-    if (matched.role === 'admin') {
+    if (newUser.role === 'admin') {
       setActiveMenu('dashboard');
-    } else if (matched.role === 'pimpinan') {
+    } else if (newUser.role === 'pimpinan') {
       setActiveMenu('dashboard_pimpinan');
-    } else if (matched.role === 'guru') {
+    } else if (newUser.role === 'piket') {
+      setActiveMenu('guru_piket');
+    } else {
       setActiveMenu('pembelajaran_saya');
     }
 
@@ -820,9 +1205,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Master CRUD & Bulk Import dengan Sinkronisasi Otomatis ke Akun, Jadwal & Relasi Lainnya
   const addTeacher = (teacher: Teacher) => {
-    setTeachers((prev) => [...prev, teacher]);
+    updateTeachersAndSync((prev) => [...prev, teacher]);
     // Otomatis sinkronkan dan buatkan akun login untuk guru baru
-    setUserAccounts((prev) => {
+    updateUserAccountsAndSync((prev) => {
       const exists = prev.some((a) => a.teacherId === teacher.id || a.username.toLowerCase() === teacher.code.toLowerCase());
       if (exists) return prev;
       const piketDays = teacher.piketDays || (teacher.isPiketToday ? ['Selasa'] : []);
@@ -845,9 +1230,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateTeacher = (teacher: Teacher) => {
-    setTeachers((prev) => prev.map((t) => (t.id === teacher.id ? teacher : t)));
+    updateTeachersAndSync((prev) => prev.map((t) => (t.id === teacher.id ? teacher : t)));
     // Sinkronkan ke akun login guru
-    setUserAccounts((prev) =>
+    updateUserAccountsAndSync((prev) =>
       prev.map((a) =>
         a.teacherId === teacher.id
           ? {
@@ -862,7 +1247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
     // Sinkronkan ke jadwal pelajaran
-    setSchedules((prev) =>
+    updateSchedulesAndSync((prev) =>
       prev.map((s) =>
         s.teacherId === teacher.id
           ? { ...s, teacherName: teacher.name, teacherCode: teacher.code }
@@ -870,7 +1255,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
     // Sinkronkan ke wali kelas
-    setClasses((prev) =>
+    updateClassesAndSync((prev) =>
       prev.map((c) =>
         c.homeroomTeacherId === teacher.id
           ? { ...c, homeroomTeacherName: teacher.name }
@@ -880,14 +1265,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteTeacher = (id: string) => {
-    setTeachers((prev) => prev.filter((t) => t.id !== id));
-    setUserAccounts((prev) => prev.filter((a) => a.teacherId !== id));
-    setSchedules((prev) =>
+    updateTeachersAndSync((prev) => prev.filter((t) => t.id !== id));
+    updateUserAccountsAndSync((prev) => prev.filter((a) => a.teacherId !== id));
+    updateSchedulesAndSync((prev) =>
       prev.map((s) =>
         s.teacherId === id ? { ...s, teacherId: 't-none', teacherName: 'Belum Ditentukan', teacherCode: undefined } : s
       )
     );
-    setClasses((prev) =>
+    updateClassesAndSync((prev) =>
       prev.map((c) =>
         c.homeroomTeacherId === id ? { ...c, homeroomTeacherId: undefined, homeroomTeacherName: undefined } : c
       )
@@ -896,16 +1281,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkDeleteTeachers = (ids: string[]) => {
     const idSet = new Set(ids);
-    setTeachers((prev) => prev.filter((t) => !idSet.has(t.id)));
-    setUserAccounts((prev) => prev.filter((a) => !a.teacherId || !idSet.has(a.teacherId)));
-    setSchedules((prev) =>
+    updateTeachersAndSync((prev) => prev.filter((t) => !idSet.has(t.id)));
+    updateUserAccountsAndSync((prev) => prev.filter((a) => !a.teacherId || !idSet.has(a.teacherId)));
+    updateSchedulesAndSync((prev) =>
       prev.map((s) =>
         idSet.has(s.teacherId)
           ? { ...s, teacherId: 't-none', teacherName: 'Belum Ditentukan', teacherCode: undefined }
           : s
       )
     );
-    setClasses((prev) =>
+    updateClassesAndSync((prev) =>
       prev.map((c) =>
         c.homeroomTeacherId && idSet.has(c.homeroomTeacherId)
           ? { ...c, homeroomTeacherId: undefined, homeroomTeacherName: undefined }
@@ -916,17 +1301,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkUpdateTeachers = (ids: string[], updates: Partial<Teacher>) => {
     const idSet = new Set(ids);
-    setTeachers((prev) =>
+    updateTeachersAndSync((prev) =>
       prev.map((t) => (idSet.has(t.id) ? { ...t, ...updates } : t))
     );
 
-    if (updates.department) {
-      // Guru's department updated
-    }
-
     if (updates.piketDays !== undefined) {
       const piketList = updates.piketDays;
-      setUserAccounts((prev) =>
+      updateUserAccountsAndSync((prev) =>
         prev.map((a) =>
           a.teacherId && idSet.has(a.teacherId)
             ? {
@@ -940,14 +1321,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const importTeachers = (newTeachers: Teacher[]) => setTeachers((prev) => [...prev, ...newTeachers]);
+  const importTeachers = (newTeachers: Teacher[]) => updateTeachersAndSync((prev) => [...prev, ...newTeachers]);
 
-  const addSubject = (subject: Subject) => setSubjects((prev) => [...prev, subject]);
+  const addSubject = (subject: Subject) => updateSubjectsAndSync((prev) => [...prev, subject]);
   const updateSubject = (subject: Subject) => {
     const oldSub = subjects.find((s) => s.id === subject.id);
-    setSubjects((prev) => prev.map((s) => (s.id === subject.id ? subject : s)));
+    updateSubjectsAndSync((prev) => prev.map((s) => (s.id === subject.id ? subject : s)));
     // Sinkronkan ke jadwal pelajaran
-    setSchedules((prev) =>
+    updateSchedulesAndSync((prev) =>
       prev.map((s) =>
         s.subjectCode === subject.code || (oldSub && s.subjectName.toLowerCase() === oldSub.name.toLowerCase())
           ? { ...s, subjectName: subject.name, subjectCode: subject.code }
@@ -956,7 +1337,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     // Sinkronkan ke Data Guru (nama mapel yang diampu guru)
     if (oldSub) {
-      setTeachers((prev) =>
+      updateTeachersAndSync((prev) =>
         prev.map((t) =>
           t.title === oldSub.name || t.title.toLowerCase() === oldSub.name.toLowerCase()
             ? { ...t, title: subject.name }
@@ -965,11 +1346,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
   };
+
   const deleteSubject = (id: string) => {
     const oldSub = subjects.find((s) => s.id === id);
-    setSubjects((prev) => prev.filter((s) => s.id !== id));
+    updateSubjectsAndSync((prev) => prev.filter((s) => s.id !== id));
     if (oldSub) {
-      setTeachers((prev) =>
+      updateTeachersAndSync((prev) =>
         prev.map((t) =>
           t.title === oldSub.name ? { ...t, title: 'Belum Ditentukan' } : t
         )
@@ -981,9 +1363,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const idSet = new Set(ids);
     const removedSubjects = subjects.filter((s) => idSet.has(s.id));
     const removedNames = new Set(removedSubjects.map((s) => s.name.toLowerCase()));
-    setSubjects((prev) => prev.filter((s) => !idSet.has(s.id)));
+    updateSubjectsAndSync((prev) => prev.filter((s) => !idSet.has(s.id)));
     if (removedNames.size > 0) {
-      setTeachers((prev) =>
+      updateTeachersAndSync((prev) =>
         prev.map((t) =>
           removedNames.has(t.title.toLowerCase()) ? { ...t, title: 'Belum Ditentukan' } : t
         )
@@ -993,17 +1375,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkUpdateSubjects = (ids: string[], updates: Partial<Subject>) => {
     const idSet = new Set(ids);
-    setSubjects((prev) =>
+    updateSubjectsAndSync((prev) =>
       prev.map((s) => (idSet.has(s.id) ? { ...s, ...updates } : s))
     );
   };
 
-  const importSubjects = (newSubjects: Subject[]) => setSubjects((prev) => [...prev, ...newSubjects]);
+  const importSubjects = (newSubjects: Subject[]) => updateSubjectsAndSync((prev) => [...prev, ...newSubjects]);
 
-  const addDepartment = (dept: Department) => setDepartments((prev) => [...prev, dept]);
+  const addDepartment = (dept: Department) => updateDepartmentsAndSync((prev) => [...prev, dept]);
   const updateDepartment = (dept: Department) => {
     let oldCode = '';
-    setDepartments((prev) => {
+    updateDepartmentsAndSync((prev) => {
       const existing = prev.find((d) => d.id === dept.id);
       if (existing) oldCode = existing.code;
       return prev.map((d) => (d.id === dept.id ? dept : d));
@@ -1012,14 +1394,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (oldCode && oldCode.toUpperCase() !== dept.code.toUpperCase()) {
       const oldUpper = oldCode.toUpperCase();
       const newCode = dept.code.toUpperCase();
-      setClasses((prev) =>
+      updateClassesAndSync((prev) =>
         prev.map((c) =>
           (c.department || '').toUpperCase() === oldUpper
             ? { ...c, department: newCode }
             : c
         )
       );
-      setSchedules((prev) =>
+      updateSchedulesAndSync((prev) =>
         prev.map((s) =>
           (s.department || '').toUpperCase() === oldUpper
             ? { ...s, department: newCode }
@@ -1031,7 +1413,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteDepartment = (id: string) => {
     let deletedCode = '';
-    setDepartments((prev) => {
+    updateDepartmentsAndSync((prev) => {
       const target = prev.find((d) => d.id === id);
       if (target) deletedCode = target.code;
       return prev.filter((d) => d.id !== id);
@@ -1039,14 +1421,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (deletedCode) {
       const upper = deletedCode.toUpperCase();
-      setClasses((prev) =>
+      updateClassesAndSync((prev) =>
         prev.map((c) =>
           (c.department || '').toUpperCase() === upper
             ? { ...c, department: 'UMUM' }
             : c
         )
       );
-      setSchedules((prev) =>
+      updateSchedulesAndSync((prev) =>
         prev.map((s) =>
           (s.department || '').toUpperCase() === upper
             ? { ...s, department: 'UMUM' }
@@ -1062,18 +1444,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .filter((d) => idSet.has(d.id))
       .map((d) => d.code.toUpperCase());
 
-    setDepartments((prev) => prev.filter((d) => !idSet.has(d.id)));
+    updateDepartmentsAndSync((prev) => prev.filter((d) => !idSet.has(d.id)));
 
     if (deletedCodes.length > 0) {
       const codeSet = new Set(deletedCodes);
-      setClasses((prev) =>
+      updateClassesAndSync((prev) =>
         prev.map((c) =>
           codeSet.has((c.department || '').toUpperCase())
             ? { ...c, department: 'UMUM' }
             : c
         )
       );
-      setSchedules((prev) =>
+      updateSchedulesAndSync((prev) =>
         prev.map((s) =>
           codeSet.has((s.department || '').toUpperCase())
             ? { ...s, department: 'UMUM' }
@@ -1085,7 +1467,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkUpdateDepartments = (ids: string[], updates: Partial<Department>) => {
     const idSet = new Set(ids);
-    setDepartments((prev) =>
+    updateDepartmentsAndSync((prev) =>
       prev.map((d) => (idSet.has(d.id) ? { ...d, ...updates } : d))
     );
     if (updates.code) {
@@ -1094,14 +1476,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         .filter((d) => idSet.has(d.id))
         .map((d) => d.code.toUpperCase());
       const oldSet = new Set(oldCodes);
-      setClasses((prev) =>
+      updateClassesAndSync((prev) =>
         prev.map((c) =>
           oldSet.has((c.department || '').toUpperCase())
             ? { ...c, department: newCode }
             : c
         )
       );
-      setSchedules((prev) =>
+      updateSchedulesAndSync((prev) =>
         prev.map((s) =>
           oldSet.has((s.department || '').toUpperCase())
             ? { ...s, department: newCode }
@@ -1111,11 +1493,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addClass = (cls: SchoolClass) => setClasses((prev) => [...prev, cls]);
+  const addClass = (cls: SchoolClass) => updateClassesAndSync((prev) => [...prev, cls]);
   const updateClass = (cls: SchoolClass) => {
-    setClasses((prev) => prev.map((c) => (c.id === cls.id ? cls : c)));
+    updateClassesAndSync((prev) => prev.map((c) => (c.id === cls.id ? cls : c)));
     // Sinkronkan nama kelas dan jurusan ke jadwal pelajaran secara real-time
-    setSchedules((prev) =>
+    updateSchedulesAndSync((prev) =>
       prev.map((s) =>
         s.classId === cls.id || s.className === cls.name
           ? { ...s, className: cls.name, department: cls.department }
@@ -1125,8 +1507,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
   const deleteClass = (id: string) => {
     const targetClass = classes.find((c) => c.id === id);
-    setClasses((prev) => prev.filter((c) => c.id !== id));
-    setSchedules((prev) =>
+    updateClassesAndSync((prev) => prev.filter((c) => c.id !== id));
+    updateSchedulesAndSync((prev) =>
       prev.filter((s) => s.classId !== id && (!targetClass || s.className !== targetClass.name))
     );
   };
@@ -1135,8 +1517,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const idSet = new Set(ids);
     const targetClasses = classes.filter((c) => idSet.has(c.id));
     const targetClassNames = new Set(targetClasses.map((c) => c.name));
-    setClasses((prev) => prev.filter((c) => !idSet.has(c.id)));
-    setSchedules((prev) =>
+    updateClassesAndSync((prev) => prev.filter((c) => !idSet.has(c.id)));
+    updateSchedulesAndSync((prev) =>
       prev.filter((s) => !idSet.has(s.classId) && !targetClassNames.has(s.className))
     );
   };
@@ -1145,11 +1527,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const idSet = new Set(ids);
     const targetClasses = classes.filter((c) => idSet.has(c.id));
     const targetClassNames = new Set(targetClasses.map((c) => c.name));
-    setClasses((prev) =>
+    updateClassesAndSync((prev) =>
       prev.map((c) => (idSet.has(c.id) ? { ...c, ...updates } : c))
     );
     if (updates.department) {
-      setSchedules((prev) =>
+      updateSchedulesAndSync((prev) =>
         prev.map((s) =>
           idSet.has(s.classId) || targetClassNames.has(s.className)
             ? { ...s, department: updates.department! }
@@ -1159,13 +1541,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const importClasses = (newClasses: SchoolClass[]) => setClasses((prev) => [...prev, ...newClasses]);
+  const importClasses = (newClasses: SchoolClass[]) => updateClassesAndSync((prev) => [...prev, ...newClasses]);
 
-  const addRoom = (room: Room) => setRooms((prev) => [...prev, room]);
+  const addRoom = (room: Room) => updateRoomsAndSync((prev) => [...prev, room]);
   const updateRoom = (room: Room) => {
-    setRooms((prev) => prev.map((r) => (r.id === room.id ? room : r)));
+    updateRoomsAndSync((prev) => prev.map((r) => (r.id === room.id ? room : r)));
     // Sinkronkan ke jadwal pelajaran
-    setSchedules((prev) =>
+    updateSchedulesAndSync((prev) =>
       prev.map((s) =>
         s.roomName === room.name || s.roomName.includes(room.code)
           ? { ...s, roomName: room.name, roomType: room.type }
@@ -1173,41 +1555,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
   };
-  const deleteRoom = (id: string) => setRooms((prev) => prev.filter((r) => r.id !== id));
+  const deleteRoom = (id: string) => updateRoomsAndSync((prev) => prev.filter((r) => r.id !== id));
 
   const bulkDeleteRooms = (ids: string[]) => {
     const idSet = new Set(ids);
-    setRooms((prev) => prev.filter((r) => !idSet.has(r.id)));
+    updateRoomsAndSync((prev) => prev.filter((r) => !idSet.has(r.id)));
   };
 
   const bulkUpdateRooms = (ids: string[], updates: Partial<Room>) => {
     const idSet = new Set(ids);
-    setRooms((prev) =>
+    updateRoomsAndSync((prev) =>
       prev.map((r) => (idSet.has(r.id) ? { ...r, ...updates } : r))
     );
   };
 
-  const importRooms = (newRooms: Room[]) => setRooms((prev) => [...prev, ...newRooms]);
+  const importRooms = (newRooms: Room[]) => updateRoomsAndSync((prev) => [...prev, ...newRooms]);
 
-  const addAcademicYear = (ay: AcademicYear) => setAcademicYears((prev) => [...prev, ay]);
+  const addAcademicYear = (ay: AcademicYear) => updateAcademicYearsAndSync((prev) => [...prev, ay]);
   const updateAcademicYear = (ay: AcademicYear) =>
-    setAcademicYears((prev) => prev.map((item) => (item.id === ay.id ? ay : item)));
-  const deleteAcademicYear = (id: string) => setAcademicYears((prev) => prev.filter((item) => item.id !== id));
+    updateAcademicYearsAndSync((prev) => prev.map((item) => (item.id === ay.id ? ay : item)));
+  const deleteAcademicYear = (id: string) => updateAcademicYearsAndSync((prev) => prev.filter((item) => item.id !== id));
 
   const bulkDeleteAcademicYears = (ids: string[]) => {
     const idSet = new Set(ids);
-    setAcademicYears((prev) => prev.filter((item) => !idSet.has(item.id) || item.status === 'aktif'));
+    updateAcademicYearsAndSync((prev) => prev.filter((item) => !idSet.has(item.id) || item.status === 'aktif'));
   };
 
   const bulkUpdateAcademicYears = (ids: string[], updates: Partial<AcademicYear>) => {
     const idSet = new Set(ids);
-    setAcademicYears((prev) =>
+    updateAcademicYearsAndSync((prev) =>
       prev.map((item) => (idSet.has(item.id) ? { ...item, ...updates } : item))
     );
   };
 
   const setActiveAcademicYear = (id: string) => {
-    setAcademicYears((prev) =>
+    updateAcademicYearsAndSync((prev) =>
       prev.map((item) => ({
         ...item,
         status: item.id === id ? 'aktif' : 'non_aktif',
@@ -1215,12 +1597,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const addSchedule = (item: ScheduleItem) => setSchedules((prev) => [...prev, item]);
+  const addSchedule = (item: ScheduleItem) => updateSchedulesAndSync((prev) => [...prev, item]);
   const updateSchedule = (item: ScheduleItem) =>
-    setSchedules((prev) => prev.map((s) => (s.id === item.id ? item : s)));
+    updateSchedulesAndSync((prev) => prev.map((s) => (s.id === item.id ? item : s)));
   const deleteSchedule = (id: string) => {
-    setSchedules((prev) => prev.filter((s) => s.id !== id));
-    setAttendanceRecords((prev) => {
+    updateSchedulesAndSync((prev) => prev.filter((s) => s.id !== id));
+    updateAttendanceRecordsAndSync((prev) => {
       const next = { ...prev };
       delete next[id];
       return next;
@@ -1229,8 +1611,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkDeleteSchedules = (ids: string[]) => {
     const idSet = new Set(ids);
-    setSchedules((prev) => prev.filter((s) => !idSet.has(s.id)));
-    setAttendanceRecords((prev) => {
+    updateSchedulesAndSync((prev) => prev.filter((s) => !idSet.has(s.id)));
+    updateAttendanceRecordsAndSync((prev) => {
       const next = { ...prev };
       ids.forEach((id) => delete next[id]);
       return next;
@@ -1239,96 +1621,114 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkUpdateSchedules = (ids: string[], updates: Partial<ScheduleItem>) => {
     const idSet = new Set(ids);
-    setSchedules((prev) =>
+    updateSchedulesAndSync((prev) =>
       prev.map((s) => (idSet.has(s.id) ? { ...s, ...updates } : s))
     );
   };
   const clearAllSchedules = () => {
-    setSchedules([]);
-    setAttendanceRecords({});
+    updateSchedulesAndSync([]);
+    updateAttendanceRecordsAndSync({});
   };
-  const importSchedules = (items: ScheduleItem[]) => setSchedules((prev) => [...prev, ...items]);
+  const clearTableData = (tableKey: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua') => {
+    if (tableKey === 'guru') {
+      updateTeachersAndSync([]);
+      updateUserAccountsAndSync((prev) => prev.filter((a) => a.role === 'admin'));
+      updateSchedulesAndSync((prev) =>
+        prev.map((s) => ({ ...s, teacherId: 't-none', teacherName: 'Belum Ditentukan', teacherCode: undefined }))
+      );
+    } else if (tableKey === 'mapel') {
+      updateSubjectsAndSync([]);
+    } else if (tableKey === 'jurusan') {
+      updateDepartmentsAndSync([]);
+    } else if (tableKey === 'kelas') {
+      updateClassesAndSync([]);
+      updateSchedulesAndSync([]);
+    } else if (tableKey === 'ruang') {
+      updateRoomsAndSync([]);
+    } else if (tableKey === 'tahun_pelajaran') {
+      updateAcademicYearsAndSync((prev) => prev.filter((ay) => ay.status === 'aktif'));
+    } else if (tableKey === 'jadwal') {
+      updateSchedulesAndSync([]);
+      updateAttendanceRecordsAndSync({});
+    } else if (tableKey === 'semua') {
+      updateTeachersAndSync([]);
+      updateSubjectsAndSync([]);
+      updateClassesAndSync([]);
+      updateRoomsAndSync([]);
+      updateDepartmentsAndSync([]);
+      updateAcademicYearsAndSync((prev) => prev.filter((ay) => ay.status === 'aktif'));
+      updateSchedulesAndSync([]);
+      updateAttendanceRecordsAndSync({});
+    }
+  };
+  const importSchedules = (items: ScheduleItem[]) => updateSchedulesAndSync((prev) => [...prev, ...items]);
   const importClassSchedules = (classId: string, items: ScheduleItem[]) => {
-    setSchedules((prev) => {
+    updateSchedulesAndSync((prev) => {
       // Hapus jadwal kelas yang diimpor, gantikan dengan jadwal baru, pertahankan jadwal kelas lainnya
       const otherClassesSchedules = prev.filter((s) => s.classId !== classId);
       return [...otherClassesSchedules, ...items];
     });
   };
 
-  const resetAllData = () => {
-    localStorage.removeItem(`${STORAGE_KEY}_teachers`);
-    localStorage.removeItem(`${STORAGE_KEY}_subjects`);
-    localStorage.removeItem(`${STORAGE_KEY}_classes`);
-    localStorage.removeItem(`${STORAGE_KEY}_rooms`);
-    localStorage.removeItem(`${STORAGE_KEY}_departments`);
-    localStorage.removeItem(`${STORAGE_KEY}_academic_years`);
-    localStorage.removeItem(`${STORAGE_KEY}_schedules`);
-    localStorage.removeItem(`${STORAGE_KEY}_attendance`);
-    localStorage.removeItem(`${STORAGE_KEY}_user_accounts`);
-    setTeachers(INITIAL_TEACHERS);
-    setSubjects(INITIAL_SUBJECTS);
-    setClasses(INITIAL_CLASSES);
-    setRooms(INITIAL_ROOMS);
-    setDepartments(INITIAL_DEPARTMENTS);
-    setAcademicYears(INITIAL_ACADEMIC_YEARS);
-    setSchedules(INITIAL_SCHEDULE);
-    setAttendanceRecords({});
-    setUserAccounts(INITIAL_USER_ACCOUNTS);
+  const resetAllData = async () => {
+    try {
+      await fetch('/api/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'seed', clientId, updatedBy: currentUser.name || 'Admin' }),
+      });
+    } catch (e) {}
+    updateTeachersAndSync(INITIAL_TEACHERS);
+    updateSubjectsAndSync(INITIAL_SUBJECTS);
+    updateClassesAndSync(INITIAL_CLASSES);
+    updateRoomsAndSync(INITIAL_ROOMS);
+    updateDepartmentsAndSync(INITIAL_DEPARTMENTS);
+    updateAcademicYearsAndSync(INITIAL_ACADEMIC_YEARS);
+    updateSchedulesAndSync(INITIAL_SCHEDULE);
+    updateAttendanceRecordsAndSync({});
+    updateUserAccountsAndSync(INITIAL_USER_ACCOUNTS);
     setCurrentPeriod(1);
     setIsSimulatedTime(false);
   };
 
+  // Helper status jadwal di dalam provider
+  const getScheduleStatus = (schedule: ScheduleItem): ScheduleLessonStatus => {
+    return getScheduleLessonStatus(schedule, currentDayIndex, currentPeriod, currentDayName);
+  };
+
   // Hitung statistik secara dinamis & real-time dari array schedules yang aktif
-  // Stats Calculation (Hanya menghitung jadwal yang aktif pada pekan yang berlaku)
+  // Stats Calculation: 3 Status (Berlangsung, Selesai, Terjadwal)
   const activeSchedulesForStats = schedules.filter((s) => isScheduleMatchingCurrentWeek(s));
   const totalJadwal = activeSchedulesForStats.length;
 
   const uniqueTeachersSet = new Set<string>();
-  let sedangBerlangsungCount = 0;
-  let terlaksanaCount = 0;
-  let tidakHadirCount = 0;
-  let belumKonfirmasiCount = 0;
+  let berlangsungCount = 0;
+  let selesaiCount = 0;
+  let terjadwalCount = 0;
 
   activeSchedulesForStats.forEach((schedule) => {
-    const rec = attendanceRecords[schedule.id];
-    const teacherStatus = rec?.teacherConfirmation?.status;
-    const piketStatus = rec?.piketConfirmation?.status;
-    const isCurrent = schedule.periodIndex === currentPeriod;
-
-    if (teacherStatus === 'hadir' || piketStatus === 'terverifikasi_hadir') {
-      if (schedule.teacherName) uniqueTeachersSet.add(schedule.teacherName);
-      if (piketStatus === 'terverifikasi_hadir') {
-        terlaksanaCount += 1;
-      } else if (isCurrent) {
-        sedangBerlangsungCount += 1;
-      } else {
-        terlaksanaCount += 1;
-      }
-    } else if (
-      teacherStatus === 'sakit' ||
-      teacherStatus === 'izin' ||
-      teacherStatus === 'dinas_luar' ||
-      piketStatus === 'tidak_hadir' ||
-      piketStatus === 'izin_terkonfirmasi' ||
-      Boolean(rec?.piketConfirmation?.substituteTeacherName)
-    ) {
-      tidakHadirCount += 1;
+    if (schedule.teacherName) uniqueTeachersSet.add(schedule.teacherName);
+    const st = getScheduleStatus(schedule);
+    if (st === 'Berlangsung') {
+      berlangsungCount += 1;
+    } else if (st === 'Selesai') {
+      selesaiCount += 1;
     } else {
-      if (isCurrent) {
-        sedangBerlangsungCount += 1;
-      }
-      belumKonfirmasiCount += 1;
+      terjadwalCount += 1;
     }
   });
 
   const stats: StatsSummary = {
     totalJadwal,
     guruMengajar: uniqueTeachersSet.size,
-    sedangBerlangsung: sedangBerlangsungCount,
-    terlaksana: terlaksanaCount,
-    belumKonfirmasi: belumKonfirmasiCount,
-    tidakHadir: tidakHadirCount,
+    sedangBerlangsung: berlangsungCount,
+    terlaksana: selesaiCount,
+    terjadwal: terjadwalCount,
+    berlangsungCount,
+    selesaiCount,
+    terjadwalCount,
+    belumKonfirmasi: 0,
+    tidakHadir: 0,
   };
 
   return (
@@ -1344,6 +1744,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         attendanceRecords,
         userAccounts,
         currentUser,
+        isAuthenticated,
+        isServerConnected,
+        logout,
         activeMenu,
         currentPeriod,
         currentTimeString,
@@ -1361,6 +1764,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getWeekTypeLabel,
         getWeekTypeShortLabel,
         isScheduleMatchingCurrentWeek,
+        getScheduleStatus,
         setActiveMenu,
         setCurrentUser,
         switchRole,
@@ -1417,6 +1821,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bulkDeleteSchedules,
         bulkUpdateSchedules,
         clearAllSchedules,
+        clearTableData,
         importSchedules,
         importClassSchedules,
         resetAllData,

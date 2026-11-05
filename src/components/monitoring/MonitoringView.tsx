@@ -2,62 +2,48 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Tv,
-  Filter,
-  MapPin,
   Clock,
   User,
-  CheckCircle2,
-  AlertCircle,
   Wrench,
   Monitor,
   Building2,
   Search,
   Layers,
-  GraduationCap,
-  Sparkles,
-  Check,
-  FileCheck,
   RotateCcw,
-  BookOpen,
   CalendarDays,
+  CheckCircle2,
+  Play,
 } from 'lucide-react';
-import { DepartmentCode, ScheduleItem } from '../../types';
-import { JournalModal } from '../modals/JournalModal';
-import { PiketVerifyModal } from '../modals/PiketVerifyModal';
+import { ScheduleItem, ScheduleLessonStatus } from '../../types';
+import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 
 export const MonitoringView: React.FC = () => {
   const {
     schedules,
-    attendanceRecords,
     currentPeriod,
     currentDateString,
     currentTimeString,
-    realtimeWeekType,
     effectiveWeekType,
     departments: masterDepartments,
     classes,
+    getScheduleStatus,
   } = useApp();
 
   const [selectedDept, setSelectedDept] = useState<string>('ALL');
-  // Default 'ALL' agar seluruh sesi pembelajaran langsung terlihat per jurusan
   const [selectedPeriod, setSelectedPeriod] = useState<number | 'ALL'>('ALL');
   const [selectedWeek, setSelectedWeek] = useState<'ACTIVE' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('ACTIVE');
+  const [selectedStatus, setSelectedStatus] = useState<'ALL' | ScheduleLessonStatus>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedJournalSchedule, setSelectedJournalSchedule] = useState<ScheduleItem | null>(null);
-  const [selectedPiketSchedule, setSelectedPiketSchedule] = useState<ScheduleItem | null>(null);
 
   // Helper resolusi jurusan secara real-time dari relasi data class, schedule, dan master jurusan
   const getScheduleDept = (item: ScheduleItem): string => {
-    // 1. Cek dari rombel kelas real-time terlebih dahulu (prioritas utama jika ada perubahan rombel di master data)
     const cls = classes.find((c) => c.id === item.classId || c.name === item.className);
     if (cls?.department && cls.department.trim()) {
       return cls.department.trim().toUpperCase();
     }
-    // 2. Jika tidak ada di kelas, gunakan department yang ada di jadwal jika terisi
     if (item.department && item.department.trim()) {
       return item.department.trim().toUpperCase();
     }
-    // 3. Fallback: deteksi dari teks nama kelas (misal: "11 TKJ 1" -> "TKJ")
     if (item.className) {
       for (const d of masterDepartments) {
         if (d.code && item.className.toUpperCase().includes(d.code.toUpperCase())) {
@@ -68,12 +54,11 @@ export const MonitoringView: React.FC = () => {
     return 'UMUM';
   };
 
-  // 1. Kumpulkan seluruh jurusan secara REAL-TIME dari Master Data & Rombel Kelas
+  // Kumpulkan seluruh jurusan secara REAL-TIME dari Master Data & Rombel Kelas
   const dynamicDepartments = useMemo(() => {
     const list: { code: string; name: string; description?: string }[] = [];
     const seen = new Set<string>();
 
-    // Prioritas utama: Master Data Departments (sinkron langsung saat ditambah/diedit/dihapus)
     masterDepartments.forEach((d) => {
       if (d.code && !seen.has(d.code.toUpperCase())) {
         seen.add(d.code.toUpperCase());
@@ -85,7 +70,6 @@ export const MonitoringView: React.FC = () => {
       }
     });
 
-    // Tambahkan jika ada rombel kelas yang memakai jurusan lain yang belum terdaftar di master
     classes.forEach((c) => {
       if (c.department && !seen.has(c.department.toUpperCase())) {
         seen.add(c.department.toUpperCase());
@@ -99,7 +83,6 @@ export const MonitoringView: React.FC = () => {
     return list;
   }, [masterDepartments, classes]);
 
-  // Otomatis sinkronisasi: jika jurusan yang sedang dipilih dihapus dari Master Data, reset ke 'ALL'
   useEffect(() => {
     if (selectedDept !== 'ALL') {
       const exists = dynamicDepartments.some(
@@ -111,7 +94,7 @@ export const MonitoringView: React.FC = () => {
     }
   }, [dynamicDepartments, selectedDept]);
 
-  // Hitung jumlah jadwal aktif per jurusan secara real-time
+  // Hitung jumlah jadwal aktif per jurusan
   const deptCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     schedules.forEach((s) => {
@@ -132,10 +115,10 @@ export const MonitoringView: React.FC = () => {
     return Array.from(setOfPeriods).sort((a, b) => a - b);
   }, [schedules]);
 
-  // Filter jadwal KBM secara real-time berdasarkan jurusan, jam pelajaran, rotasi pekan, dan pencarian
+  // Filter jadwal KBM secara real-time berdasarkan jurusan, jam, rotasi pekan, status (Berlangsung, Selesai, Terjadwal), dan pencarian
   const filtered = useMemo(() => {
     return schedules.filter((s) => {
-      // Filter Rotasi Pekan (K10 Produktif & K11 NormAdaptif vs K10 NormAdaptif & K11 Produktif)
+      // 1. Filter Rotasi Pekan
       if (selectedWeek === 'ACTIVE') {
         const itemWeek = s.weekType || 'ALL';
         if (itemWeek !== 'ALL' && itemWeek !== effectiveWeekType) return false;
@@ -144,15 +127,22 @@ export const MonitoringView: React.FC = () => {
         if (itemWeek !== 'ALL' && itemWeek !== selectedWeek) return false;
       }
 
+      // 2. Filter Jurusan
       const itemDept = getScheduleDept(s).toUpperCase();
       const matchDept = selectedDept === 'ALL' || itemDept === selectedDept.toUpperCase();
 
+      // 3. Filter Jam Pelajaran
       const numPeriod = typeof s.periodIndex === 'number' ? s.periodIndex : parseInt(String(s.periodIndex), 10);
       const matchPeriod =
         selectedPeriod === 'ALL' ||
         numPeriod === selectedPeriod ||
         String(s.periodIndex) === String(selectedPeriod);
 
+      // 4. Filter Status (Berlangsung, Selesai, Terjadwal)
+      const st = getScheduleStatus(s);
+      const matchStatus = selectedStatus === 'ALL' || st === selectedStatus;
+
+      // 5. Pencarian
       const q = searchQuery.toLowerCase().trim();
       const matchSearch =
         !q ||
@@ -162,39 +152,46 @@ export const MonitoringView: React.FC = () => {
         s.roomName.toLowerCase().includes(q) ||
         itemDept.toLowerCase().includes(q);
 
-      return matchDept && matchPeriod && matchSearch;
+      return matchDept && matchPeriod && matchStatus && matchSearch;
     });
-  }, [schedules, classes, masterDepartments, selectedDept, selectedPeriod, selectedWeek, effectiveWeekType, searchQuery]);
+  }, [schedules, classes, masterDepartments, selectedDept, selectedPeriod, selectedWeek, selectedStatus, effectiveWeekType, searchQuery, getScheduleStatus]);
 
-  // Ringkasan metrik pemantauan
+  // Ringkasan metrik 3 status
   const stats = useMemo(() => {
-    let teacherHadir = 0;
-    let piketVerified = 0;
-    let invalActive = 0;
-    let excused = 0;
+    let berlangsung = 0;
+    let selesai = 0;
+    let terjadwal = 0;
 
-    filtered.forEach((item) => {
-      const record = attendanceRecords[item.id];
-      if (record?.teacherConfirmation?.status === 'hadir') teacherHadir++;
-      if (record?.piketConfirmation?.status === 'terverifikasi_hadir') piketVerified++;
-      if (record?.piketConfirmation?.substituteTeacherName) invalActive++;
-      if (
-        record?.teacherConfirmation?.status === 'izin' ||
-        record?.teacherConfirmation?.status === 'sakit' ||
-        record?.teacherConfirmation?.status === 'dinas_luar'
-      ) {
-        excused++;
+    // Hitung berdasarkan filter selain filter status agar angkanya tetap informatif
+    const baseList = schedules.filter((s) => {
+      if (selectedWeek === 'ACTIVE') {
+        const itemWeek = s.weekType || 'ALL';
+        if (itemWeek !== 'ALL' && itemWeek !== effectiveWeekType) return false;
+      } else if (selectedWeek !== 'ALL') {
+        const itemWeek = s.weekType || 'ALL';
+        if (itemWeek !== 'ALL' && itemWeek !== selectedWeek) return false;
       }
+      const itemDept = getScheduleDept(s).toUpperCase();
+      if (selectedDept !== 'ALL' && itemDept !== selectedDept.toUpperCase()) return false;
+      const numPeriod = typeof s.periodIndex === 'number' ? s.periodIndex : parseInt(String(s.periodIndex), 10);
+      if (selectedPeriod !== 'ALL' && numPeriod !== selectedPeriod && String(s.periodIndex) !== String(selectedPeriod)) return false;
+      return true;
+    });
+
+    baseList.forEach((item) => {
+      const st = getScheduleStatus(item);
+      if (st === 'Berlangsung') berlangsung++;
+      else if (st === 'Selesai') selesai++;
+      else terjadwal++;
     });
 
     return {
-      total: filtered.length,
-      teacherHadir,
-      piketVerified,
-      invalActive,
-      excused,
+      total: baseList.length,
+      berlangsung,
+      selesai,
+      terjadwal,
     };
-  }, [filtered, attendanceRecords]);
+  }, [schedules, classes, masterDepartments, selectedDept, selectedPeriod, selectedWeek, effectiveWeekType, getScheduleStatus]);
 
   // Color theme badge per jurusan secara dinamis & adaptif
   const getDeptBadgeStyle = (code: string) => {
@@ -205,8 +202,7 @@ export const MonitoringView: React.FC = () => {
     if (u.includes('DPB')) return 'bg-purple-50 text-purple-800 border-purple-300';
     if (u.includes('RPL')) return 'bg-emerald-50 text-emerald-800 border-emerald-300';
     if (u.includes('UMUM')) return 'bg-indigo-50 text-indigo-800 border-indigo-300';
-    
-    // Palet warna otomatis untuk jurusan custom yang ditambahkan oleh user
+
     const colors = [
       'bg-teal-50 text-teal-800 border-teal-300',
       'bg-rose-50 text-rose-800 border-rose-300',
@@ -230,7 +226,7 @@ export const MonitoringView: React.FC = () => {
               Live Monitoring Real-Time
             </span>
             <span className="text-[10px] font-bold uppercase tracking-widest bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full border border-emerald-200">
-              Sinkron Data Master Aktif
+              Jadwal Pembelajaran
             </span>
           </div>
           <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2.5 mt-1.5">
@@ -238,10 +234,10 @@ export const MonitoringView: React.FC = () => {
             <span>Monitoring Pembelajaran Real-Time</span>
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Pantau status pelaksanaan KBM seluruh program keahlian di setiap ruang kelas, lab komputer, dan bengkel praktik SMKN 1 Tegalsari.
+            Pantau status jadwal pelajaran di setiap ruang kelas, lab komputer, dan bengkel praktik SMKN 1 Tegalsari (Berlangsung, Selesai, Terjadwal).
           </p>
 
-          {/* Real-Time Laptop Clock & Active Week Rotation Display */}
+          {/* Real-Time Clock & Week Rotation */}
           <div className="flex flex-wrap items-center gap-2 mt-2.5">
             <span className="text-xs font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-xl border border-slate-200 flex items-center gap-1.5 shadow-2xs">
               <Clock className="w-3.5 h-3.5 text-amber-500" />
@@ -250,7 +246,7 @@ export const MonitoringView: React.FC = () => {
             <span className="text-xs font-bold text-amber-950 bg-amber-50 border border-amber-200 px-3 py-1 rounded-xl flex items-center gap-1.5 shadow-2xs">
               <CalendarDays className="w-3.5 h-3.5 text-cyan-700" />
               <span>
-                Rotasi Aktif:{' '}
+                Rotasi:{' '}
                 <strong className="underline">
                   {effectiveWeekType === 'P10_PROD_P11_NORM'
                     ? 'Pekan K10 Produktif & K11 Normatif Adaptif'
@@ -321,12 +317,12 @@ export const MonitoringView: React.FC = () => {
         </div>
       </div>
 
-      {/* Real-time Department Tabs (Sinkron Otomatis dengan Data Master) */}
+      {/* Real-time Department Tabs */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs text-slate-500 px-0.5">
           <span className="font-bold flex items-center gap-1.5 text-slate-700">
             <Layers className="w-3.5 h-3.5 text-cyan-600" />
-            <span>Pilih Program Keahlian (Real-Time Master Data):</span>
+            <span>Pilih Program Keahlian:</span>
           </span>
           <span className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
             {dynamicDepartments.length} Jurusan Terdata
@@ -381,11 +377,12 @@ export const MonitoringView: React.FC = () => {
             );
           })}
 
-          {(selectedDept !== 'ALL' || selectedPeriod !== 'ALL' || searchQuery) && (
+          {(selectedDept !== 'ALL' || selectedPeriod !== 'ALL' || selectedStatus !== 'ALL' || searchQuery) && (
             <button
               onClick={() => {
                 setSelectedDept('ALL');
                 setSelectedPeriod('ALL');
+                setSelectedStatus('ALL');
                 setSearchQuery('');
               }}
               className="text-cyan-700 hover:text-cyan-900 text-xs font-semibold flex items-center gap-1 ml-2 underline cursor-pointer"
@@ -397,100 +394,121 @@ export const MonitoringView: React.FC = () => {
         </div>
       </div>
 
-      {/* Tab Filter Rotasi Pekan (Pekan A vs Pekan B) */}
-      <div className="flex flex-wrap items-center gap-2 bg-slate-100/90 p-2 rounded-2xl border border-slate-200 text-xs">
-        <span className="font-bold text-slate-700 px-2 flex items-center gap-1.5">
-          <CalendarDays className="w-3.5 h-3.5 text-cyan-700 shrink-0" />
-          <span>Rotasi Pekan:</span>
-        </span>
+      {/* Row: Filter Status 3 Pilihan + Rotasi Pekan */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-100/90 p-2.5 rounded-2xl border border-slate-200 text-xs">
+        {/* Status Filters: 3 Status (Berlangsung, Selesai, Terjadwal) */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-bold text-slate-700 px-1 text-xs">Status:</span>
+          <button
+            onClick={() => setSelectedStatus('ALL')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+              selectedStatus === 'ALL'
+                ? 'bg-[#0B1E2E] text-white shadow-xs'
+                : 'text-slate-700 bg-white hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            Semua ({stats.total})
+          </button>
+          <button
+            onClick={() => setSelectedStatus('Berlangsung')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              selectedStatus === 'Berlangsung'
+                ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400'
+                : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Berlangsung ({stats.berlangsung})</span>
+          </button>
+          <button
+            onClick={() => setSelectedStatus('Selesai')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              selectedStatus === 'Selesai'
+                ? 'bg-slate-700 text-white shadow-xs'
+                : 'text-slate-700 bg-white hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-slate-500" />
+            <span>Selesai ({stats.selesai})</span>
+          </button>
+          <button
+            onClick={() => setSelectedStatus('Terjadwal')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              selectedStatus === 'Terjadwal'
+                ? 'bg-sky-700 text-white shadow-xs'
+                : 'text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-200'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 text-sky-600" />
+            <span>Terjadwal ({stats.terjadwal})</span>
+          </button>
+        </div>
 
-        <button
-          onClick={() => setSelectedWeek('ACTIVE')}
-          className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
-            selectedWeek === 'ACTIVE'
-              ? 'bg-[#0B1E2E] text-white shadow-xs'
-              : 'text-slate-700 bg-white hover:bg-slate-50 border border-slate-200'
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span>Pekan Aktif Real-Time ({effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})</span>
-        </button>
-
-        <button
-          onClick={() => setSelectedWeek('P10_PROD_P11_NORM')}
-          className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
-            selectedWeek === 'P10_PROD_P11_NORM'
-              ? 'bg-emerald-700 text-white shadow-xs'
-              : 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-emerald-500" />
-          <span>Pekan K10 Produktif & K11 Normatif Adaptif</span>
-        </button>
-
-        <button
-          onClick={() => setSelectedWeek('P10_NORM_P11_PROD')}
-          className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
-            selectedWeek === 'P10_NORM_P11_PROD'
-              ? 'bg-purple-700 text-white shadow-xs'
-              : 'text-purple-800 bg-purple-50 hover:bg-purple-100 border border-purple-200'
-          }`}
-        >
-          <span className="w-2 h-2 rounded-full bg-purple-500" />
-          <span>Pekan K10 Normatif Adaptif & K11 Produktif</span>
-        </button>
-
-        <button
-          onClick={() => setSelectedWeek('ALL')}
-          className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
-            selectedWeek === 'ALL'
-              ? 'bg-slate-700 text-white shadow-xs'
-              : 'text-slate-700 bg-white hover:bg-slate-50 border border-slate-200'
-          }`}
-        >
-          <span>Semua Pekan (Gabungan)</span>
-        </button>
+        {/* Rotasi Pekan */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-bold text-slate-700 px-1 text-xs">Pekan:</span>
+          <button
+            onClick={() => setSelectedWeek('ACTIVE')}
+            className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer text-[11px] ${
+              selectedWeek === 'ACTIVE'
+                ? 'bg-slate-800 text-white shadow-xs'
+                : 'text-slate-600 bg-white hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            Pekan Aktif
+          </button>
+          <button
+            onClick={() => setSelectedWeek('ALL')}
+            className={`px-2.5 py-1 rounded-lg font-bold transition cursor-pointer text-[11px] ${
+              selectedWeek === 'ALL'
+                ? 'bg-slate-800 text-white shadow-xs'
+                : 'text-slate-600 bg-white hover:bg-slate-50 border border-slate-200'
+            }`}
+          >
+            Semua Pekan
+          </button>
+        </div>
       </div>
 
-      {/* Mini Stats Banner */}
+      {/* Mini Stats Banner: 3 Statuses */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-2xs text-xs">
         <div className="flex items-center gap-2.5 px-2">
           <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold">
             <Tv className="w-4 h-4" />
           </div>
           <div>
-            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Jadwal Tampil</span>
+            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Total Jadwal</span>
             <span className="font-extrabold text-slate-900 text-sm tabular-nums">{stats.total} Sesi</span>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 px-2">
           <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-            <CheckCircle2 className="w-4 h-4" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
           </div>
           <div>
-            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Guru Hadir</span>
-            <span className="font-extrabold text-emerald-700 text-sm tabular-nums">{stats.teacherHadir} Kelas</span>
+            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Sedang Berlangsung</span>
+            <span className="font-extrabold text-emerald-700 text-sm tabular-nums">{stats.berlangsung} Sesi</span>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 px-2">
-          <div className="w-8 h-8 rounded-xl bg-cyan-50 text-cyan-600 flex items-center justify-center font-bold">
-            <FileCheck className="w-4 h-4" />
+          <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold">
+            <CheckCircle2 className="w-4 h-4 text-slate-600" />
           </div>
           <div>
-            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Piket Terverifikasi</span>
-            <span className="font-extrabold text-cyan-700 text-sm tabular-nums">{stats.piketVerified} Tercek</span>
+            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Selesai</span>
+            <span className="font-extrabold text-slate-700 text-sm tabular-nums">{stats.selesai} Sesi</span>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5 px-2">
-          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-            <User className="w-4 h-4" />
+          <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+            <Clock className="w-4 h-4 text-sky-600" />
           </div>
           <div>
-            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Guru Inval Aktif</span>
-            <span className="font-extrabold text-blue-700 text-sm tabular-nums">{stats.invalActive} Inval</span>
+            <span className="text-[10px] font-semibold text-slate-400 block uppercase">Terjadwal</span>
+            <span className="font-extrabold text-sky-700 text-sm tabular-nums">{stats.terjadwal} Sesi</span>
           </div>
         </div>
       </div>
@@ -504,32 +522,26 @@ export const MonitoringView: React.FC = () => {
             <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
               {schedules.length === 0
                 ? 'Belum ada data jadwal pelajaran yang terdaftar pada sistem.'
-                : `Tidak ada jadwal yang sesuai dengan filter Jurusan "${selectedDept}", Jam "${selectedPeriod}", atau kata kunci pencarian.`}
+                : `Tidak ada jadwal yang sesuai dengan filter Jurusan "${selectedDept}", Jam "${selectedPeriod}", Status "${selectedStatus}", atau kata kunci pencarian.`}
             </p>
-            {(selectedDept !== 'ALL' || selectedPeriod !== 'ALL' || searchQuery) && (
+            {(selectedDept !== 'ALL' || selectedPeriod !== 'ALL' || selectedStatus !== 'ALL' || searchQuery) && (
               <button
                 onClick={() => {
                   setSelectedDept('ALL');
                   setSelectedPeriod('ALL');
+                  setSelectedStatus('ALL');
                   setSearchQuery('');
                 }}
                 className="px-4 py-2 bg-cyan-700 hover:bg-cyan-800 text-white text-xs font-bold rounded-xl shadow-xs transition inline-flex items-center gap-1.5 cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Tampilkan Seluruh Jurusan & Jam</span>
+                <span>Tampilkan Seluruh Jadwal</span>
               </button>
             )}
           </div>
         ) : (
           filtered.map((item) => {
-            const record = attendanceRecords[item.id];
-            const isTeacherPresent = record?.teacherConfirmation?.status === 'hadir';
-            const isPiketVerified = record?.piketConfirmation?.status === 'terverifikasi_hadir';
-            const isTeacherExcused =
-              record?.teacherConfirmation?.status === 'izin' ||
-              record?.teacherConfirmation?.status === 'sakit' ||
-              record?.teacherConfirmation?.status === 'dinas_luar';
-
+            const status = getScheduleStatus(item);
             const resolvedDept = getScheduleDept(item);
             const deptBadgeClass = getDeptBadgeStyle(resolvedDept);
 
@@ -543,7 +555,11 @@ export const MonitoringView: React.FC = () => {
             return (
               <div
                 key={item.id}
-                className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-md transition overflow-hidden flex flex-col justify-between"
+                className={`bg-white rounded-2xl border shadow-2xs hover:shadow-md transition overflow-hidden flex flex-col justify-between ${
+                  status === 'Berlangsung'
+                    ? 'border-emerald-300 ring-2 ring-emerald-500/20'
+                    : 'border-slate-200/90'
+                }`}
               >
                 {/* Card Header */}
                 <div className="p-4 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between gap-2">
@@ -568,7 +584,7 @@ export const MonitoringView: React.FC = () => {
                       </span>
                     ) : null}
 
-                    {/* Real-time Department Badge */}
+                    {/* Department Badge */}
                     <span
                       className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border shadow-2xs ${deptBadgeClass}`}
                     >
@@ -597,78 +613,17 @@ export const MonitoringView: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Status Pills */}
-                  <div className="pt-2 grid grid-cols-2 gap-2 text-[11px]">
-                    <div
-                      className={`p-2 rounded-lg border text-center font-bold ${
-                        isTeacherPresent
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : isTeacherExcused
-                          ? 'bg-amber-50 text-amber-800 border-amber-200'
-                          : 'bg-slate-50 text-slate-500 border-slate-200'
-                      }`}
-                    >
-                      Guru: {isTeacherPresent ? 'Hadir' : isTeacherExcused ? (record?.teacherConfirmation?.status || 'Izin') : 'Belum Konfirmasi'}
-                    </div>
-
-                    <div
-                      className={`p-2 rounded-lg border text-center font-bold ${
-                        isPiketVerified
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : record?.piketConfirmation?.substituteTeacherName
-                          ? 'bg-blue-50 text-blue-800 border-blue-200'
-                          : 'bg-slate-50 text-slate-500 border-slate-200'
-                      }`}
-                    >
-                      Piket: {isPiketVerified ? 'Terverifikasi' : record?.piketConfirmation?.substituteTeacherName ? 'Inval Aktif' : 'Belum Cek'}
-                    </div>
+                  {/* Status Display: 3 Statuses */}
+                  <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                    <span className="text-xs font-semibold text-slate-500">Status KBM:</span>
+                    <ScheduleStatusBadge status={status} size="md" />
                   </div>
-
-                  {/* Substitute banner if active */}
-                  {record?.piketConfirmation?.substituteTeacherName && (
-                    <div className="text-[11px] bg-blue-50 text-blue-900 p-2 rounded-lg border border-blue-200">
-                      <span className="font-bold">Guru Pengganti:</span> {record.piketConfirmation.substituteTeacherName}
-                    </div>
-                  )}
-                </div>
-
-                {/* Card Footer Actions */}
-                <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => setSelectedJournalSchedule(item)}
-                    className="flex-1 py-1.5 px-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold rounded-lg text-center transition cursor-pointer"
-                  >
-                    Jurnal KBM
-                  </button>
-                  <button
-                    onClick={() => setSelectedPiketSchedule(item)}
-                    className="flex-1 py-1.5 px-2 bg-cyan-700 hover:bg-cyan-800 text-white text-xs font-semibold rounded-lg text-center shadow-2xs transition cursor-pointer"
-                  >
-                    Verifikasi Piket
-                  </button>
                 </div>
               </div>
             );
           })
         )}
       </div>
-
-      {/* Modals */}
-      {selectedJournalSchedule && (
-        <JournalModal
-          schedule={selectedJournalSchedule}
-          isOpen={!!selectedJournalSchedule}
-          onClose={() => setSelectedJournalSchedule(null)}
-        />
-      )}
-
-      {selectedPiketSchedule && (
-        <PiketVerifyModal
-          schedule={selectedPiketSchedule}
-          isOpen={!!selectedPiketSchedule}
-          onClose={() => setSelectedPiketSchedule(null)}
-        />
-      )}
     </div>
   );
 };

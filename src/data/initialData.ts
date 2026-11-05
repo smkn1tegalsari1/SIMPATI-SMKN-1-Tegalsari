@@ -869,6 +869,8 @@ export const INITIAL_SCHEDULE: ScheduleItem[] = [
   },
 ];
 
+export const INITIAL_SCHEDULES = INITIAL_SCHEDULE;
+
 export const INITIAL_ATTENDANCE_RECORDS: Record<string, AttendanceRecord> = {
   // Biarkan record awal kosong atau pending agar sesuai persis dengan screenshot (396 belum konfirmasi)
 };

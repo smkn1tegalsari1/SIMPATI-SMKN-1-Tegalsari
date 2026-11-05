@@ -1,14 +1,14 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
-import { Clock, Shield, User, UserCheck, Crown, CalendarDays, Sparkles } from 'lucide-react';
+import { Clock, Shield, User, UserCheck, Crown, CalendarDays, Sparkles, LogOut, Radio } from 'lucide-react';
 import { PERIOD_TIMES } from '../../data/initialData';
 import { UserRole } from '../../types';
 
 interface HeaderProps {
-  onOpenDemoLogin: () => void;
+  onOpenDemoLogin?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenDemoLogin }) => {
+export const Header: React.FC<HeaderProps> = () => {
   const {
     currentUser,
     currentPeriod,
@@ -21,6 +21,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDemoLogin }) => {
     effectiveWeekType,
     setActiveWeekFilter,
     getWeekTypeShortLabel,
+    isServerConnected,
+    logout,
   } = useApp();
 
   const roleLabels: Record<UserRole, { label: string; icon: React.FC<{ className?: string }> }> = {
@@ -106,25 +108,57 @@ export const Header: React.FC<HeaderProps> = ({ onOpenDemoLogin }) => {
           </div>
         </div>
 
-        {/* Current Active User Button */}
-        <button
-          onClick={onOpenDemoLogin}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-lg transition"
-          title={`Masuk sebagai ${currentUser.name} (${currentUser.username || currentUser.role}) · Klik untuk Login / Ganti Akun`}
+        {/* Server Sync Indicator */}
+        <div
+          className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+            isServerConnected
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+              : 'bg-amber-50 text-amber-800 border-amber-300'
+          }`}
+          title={
+            isServerConnected
+              ? 'Terhubung ke server terpusat. Semua perubahan admin, guru, & piket tersinkron otomatis secara real-time.'
+              : 'Menghubungkan ke server terpusat...'
+          }
         >
-          <RoleIcon className="w-3.5 h-3.5 text-cyan-600" />
-          <span className="hidden sm:inline font-bold">{currentUser.name}</span>
-          {currentUser.username && (
-            <span className="hidden md:inline font-mono text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded">
-              {currentUser.username}
-            </span>
-          )}
-          {currentUser.isPiketToday && (
-            <span className="hidden xl:inline text-[10px] font-extrabold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded-full">
-              Piket Hari Ini
-            </span>
-          )}
-        </button>
+          <span
+            className={`w-2 h-2 rounded-full ${
+              isServerConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+            }`}
+          />
+          <span>{isServerConnected ? 'Server Sinkron' : 'Menghubungkan...'}</span>
+        </div>
+
+        {/* Current Active User Profile Badge */}
+        <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+          <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg">
+            <RoleIcon className="w-3.5 h-3.5 text-cyan-600" />
+            <div className="flex flex-col text-left">
+              <span className="font-bold text-slate-900 leading-tight truncate max-w-[150px]">
+                {currentUser.name}
+              </span>
+              <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                <span className="font-mono text-cyan-800 uppercase font-extrabold">
+                  {currentUser.role}
+                </span>
+                {currentUser.isPiketToday && (
+                  <span className="font-bold text-emerald-700 bg-emerald-100 px-1 rounded-sm">
+                    Piket
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Direct Logout Button */}
+          <button
+            onClick={logout}
+            className="p-2 text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded-lg transition cursor-pointer"
+            title="Keluar dari Akun (Logout)"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </header>
   );

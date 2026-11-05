@@ -1,43 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Crown,
   TrendingUp,
   Users,
   CheckCircle2,
-  AlertTriangle,
-  Building2,
-  BarChart3,
-  Calendar,
-  FileCheck,
-  Layers,
-  GraduationCap,
   Clock,
   Search,
   BookOpen,
-  Cpu,
-  Car,
-  Wrench,
-  Code2,
-  School,
+  Layers,
   Sparkles,
-  Check,
-  ChevronRight,
-  Filter,
   CalendarDays,
+  Activity,
+  Calendar,
 } from 'lucide-react';
+import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 
 export const DashboardPimpinanView: React.FC = () => {
   const {
     schedules,
-    attendanceRecords,
     currentDateString,
     currentTimeString,
     semesterString,
     effectiveWeekType,
-    realtimeWeekType,
     departments,
     classes,
+    getScheduleStatus,
   } = useApp();
 
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>('ALL');
@@ -45,58 +33,41 @@ export const DashboardPimpinanView: React.FC = () => {
   const [deptSearchQuery, setDeptSearchQuery] = useState<string>('');
 
   // Filter schedules by selected week rotation
-  const effectiveSchedules = schedules.filter((s) => {
-    if (selectedWeek === 'ACTIVE') {
-      const itemWeek = s.weekType || 'ALL';
-      return itemWeek === 'ALL' || itemWeek === effectiveWeekType;
-    } else if (selectedWeek !== 'ALL') {
-      const itemWeek = s.weekType || 'ALL';
-      return itemWeek === 'ALL' || itemWeek === selectedWeek;
-    }
-    return true;
-  });
+  const effectiveSchedules = useMemo(() => {
+    return schedules.filter((s) => {
+      if (selectedWeek === 'ACTIVE') {
+        const itemWeek = s.weekType || 'ALL';
+        return itemWeek === 'ALL' || itemWeek === effectiveWeekType;
+      } else if (selectedWeek !== 'ALL') {
+        const itemWeek = s.weekType || 'ALL';
+        return itemWeek === 'ALL' || itemWeek === selectedWeek;
+      }
+      return true;
+    });
+  }, [schedules, selectedWeek, effectiveWeekType]);
 
-  // Overall Metrics calculation
+  // Overall Metrics calculation based on 3 statuses
   const totalSlots = effectiveSchedules.length;
-  let presentSlots = 0;
-  let verifiedSlots = 0;
-  let excusedSlots = 0;
-  let substituteSlots = 0;
+  let berlangsungSlots = 0;
+  let selesaiSlots = 0;
+  let terjadwalSlots = 0;
 
   effectiveSchedules.forEach((s) => {
-    const rec = attendanceRecords[s.id];
-    if (rec?.teacherConfirmation?.status === 'hadir') presentSlots += 1;
-    if (rec?.piketConfirmation?.status === 'terverifikasi_hadir') verifiedSlots += 1;
-    if (
-      rec?.teacherConfirmation?.status === 'izin' ||
-      rec?.teacherConfirmation?.status === 'sakit' ||
-      rec?.teacherConfirmation?.status === 'dinas_luar'
-    ) {
-      excusedSlots += 1;
-    }
-    if (rec?.piketConfirmation?.substituteTeacherName) substituteSlots += 1;
+    const st = getScheduleStatus(s);
+    if (st === 'Berlangsung') berlangsungSlots += 1;
+    else if (st === 'Selesai') selesaiSlots += 1;
+    else terjadwalSlots += 1;
   });
 
-  const verifiedOrPresentTotal = effectiveSchedules.filter((s) => {
-    const rec = attendanceRecords[s.id];
-    return (
-      rec?.piketConfirmation?.status === 'terverifikasi_hadir' ||
-      rec?.teacherConfirmation?.status === 'hadir' ||
-      Boolean(rec?.piketConfirmation?.substituteTeacherName)
-    );
-  }).length;
-
   const completionPercentage =
-    totalSlots > 0 ? Math.round((verifiedOrPresentTotal / totalSlots) * 100) : 0;
-  const teacherPunctuality = totalSlots === 0 ? 0 : presentSlots > 0 ? 98 : 0;
+    totalSlots > 0 ? Math.round(((selesaiSlots + berlangsungSlots) / totalSlots) * 100) : 0;
 
-  // Department metrics: Ambil SEMUA Jurusan (dari Data Master Departments + Schedules + Classes)
+  // Department metrics: Ambil SEMUA Jurusan
   const allDeptMap = new Map<
     string,
     { code: string; name: string; description?: string }
   >();
 
-  // 1. Masukkan seluruh Master Department
   departments.forEach((d) => {
     if (d.code) {
       allDeptMap.set(d.code.toUpperCase(), {
@@ -107,7 +78,6 @@ export const DashboardPimpinanView: React.FC = () => {
     }
   });
 
-  // 2. Tambahkan jika ada department unik di data kelas atau jadwal
   classes.forEach((c) => {
     if (c.department && !allDeptMap.has(c.department.toUpperCase())) {
       allDeptMap.set(c.department.toUpperCase(), {
@@ -128,98 +98,59 @@ export const DashboardPimpinanView: React.FC = () => {
     }
   });
 
-  // Susun data statistik per jurusan
+  // Susun data statistik 3 status per jurusan
   const deptStats = Array.from(allDeptMap.values()).map((dept) => {
     const upperCode = dept.code.toUpperCase();
 
-    // Rombel kelas untuk jurusan ini
     const deptClasses = classes.filter(
       (c) => (c.department || '').toUpperCase() === upperCode
     );
 
-    // Jadwal untuk jurusan ini (cocokkan kode department langsung atau melalui rombel kelas)
-    const deptSchedules = schedules.filter((s) => {
+    const deptSchedules = effectiveSchedules.filter((s) => {
       const matchScheduleDept = (s.department || '').toUpperCase() === upperCode;
       const classObj = classes.find((c) => c.id === s.classId);
       const matchClassDept = (classObj?.department || '').toUpperCase() === upperCode;
       return matchScheduleDept || matchClassDept;
     });
 
-    let completed = 0;
-    let guruHadir = 0;
-    let piketHadir = 0;
-    let izinSakit = 0;
-    let invalTerisi = 0;
+    let berlangsung = 0;
+    let selesai = 0;
+    let terjadwal = 0;
 
     deptSchedules.forEach((s) => {
-      const rec = attendanceRecords[s.id];
-      const isTeacherHadir = rec?.teacherConfirmation?.status === 'hadir';
-      const isPiketHadir = rec?.piketConfirmation?.status === 'terverifikasi_hadir';
-      const hasInval = Boolean(rec?.piketConfirmation?.substituteTeacherName);
-      const isExcused =
-        rec?.teacherConfirmation?.status === 'izin' ||
-        rec?.teacherConfirmation?.status === 'sakit' ||
-        rec?.teacherConfirmation?.status === 'dinas_luar';
-
-      if (isTeacherHadir) guruHadir += 1;
-      if (isPiketHadir) piketHadir += 1;
-      if (hasInval) invalTerisi += 1;
-      if (isExcused) izinSakit += 1;
-
-      // Dianggap terlaksana jika terverifikasi oleh piket, guru konfirmasi hadir, atau terisi inval
-      if (isPiketHadir || isTeacherHadir || hasInval) {
-        completed += 1;
-      }
+      const st = getScheduleStatus(s);
+      if (st === 'Berlangsung') berlangsung += 1;
+      else if (st === 'Selesai') selesai += 1;
+      else terjadwal += 1;
     });
 
     const total = deptSchedules.length;
-    const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const percentage = total > 0 ? Math.round(((selesai + berlangsung) / total) * 100) : 0;
 
     return {
       code: dept.code,
       name: dept.name,
       description: dept.description,
-      total,
-      completed,
+      classesCount: deptClasses.length,
+      totalSchedules: total,
+      berlangsung,
+      selesai,
+      terjadwal,
       percentage,
-      guruHadir,
-      piketHadir,
-      izinSakit,
-      invalTerisi,
-      classCount: deptClasses.length,
     };
   });
 
-  // Filter department cards by search query
   const filteredDeptStats = deptStats.filter((d) => {
-    if (!deptSearchQuery) return true;
+    if (!deptSearchQuery.trim()) return true;
     const q = deptSearchQuery.toLowerCase();
-    return (
-      d.code.toLowerCase().includes(q) ||
-      d.name.toLowerCase().includes(q) ||
-      (d.description && d.description.toLowerCase().includes(q))
-    );
+    return d.code.toLowerCase().includes(q) || d.name.toLowerCase().includes(q);
   });
 
-  // Helper icon per jurusan
-  const getDeptIcon = (code: string) => {
-    const u = code.toUpperCase();
-    if (u.includes('TKJ')) return Cpu;
-    if (u.includes('TKR') || u.includes('OTOMOTIF')) return Car;
-    if (u.includes('TSM') || u.includes('MOTOR')) return Wrench;
-    if (u.includes('DPB') || u.includes('BANGUNAN') || u.includes('ARSITEK')) return Building2;
-    if (u.includes('RPL') || u.includes('PERANGKAT')) return Code2;
-    if (u.includes('UMUM')) return BookOpen;
-    return GraduationCap;
-  };
-
-  // Helper color theme per jurusan
   const getDeptColorTheme = (code: string) => {
-    const u = code.toUpperCase();
+    const u = (code || '').toUpperCase();
     if (u.includes('TKJ')) {
       return {
         badge: 'bg-cyan-50 text-cyan-800 border-cyan-200',
-        iconBg: 'bg-cyan-50 text-cyan-700 border-cyan-200',
         progressBar: 'bg-cyan-600',
         activeRing: 'ring-2 ring-cyan-500 bg-cyan-50/20',
       };
@@ -227,15 +158,13 @@ export const DashboardPimpinanView: React.FC = () => {
     if (u.includes('TKR')) {
       return {
         badge: 'bg-blue-50 text-blue-800 border-blue-200',
-        iconBg: 'bg-blue-50 text-blue-700 border-blue-200',
         progressBar: 'bg-blue-600',
         activeRing: 'ring-2 ring-blue-500 bg-blue-50/20',
       };
     }
     if (u.includes('TSM')) {
       return {
-        badge: 'bg-amber-50 text-amber-800 border-amber-200',
-        iconBg: 'bg-amber-50 text-amber-700 border-amber-200',
+        badge: 'bg-amber-50 text-amber-900 border-amber-300',
         progressBar: 'bg-amber-600',
         activeRing: 'ring-2 ring-amber-500 bg-amber-50/20',
       };
@@ -243,7 +172,6 @@ export const DashboardPimpinanView: React.FC = () => {
     if (u.includes('DPB')) {
       return {
         badge: 'bg-purple-50 text-purple-800 border-purple-200',
-        iconBg: 'bg-purple-50 text-purple-700 border-purple-200',
         progressBar: 'bg-purple-600',
         activeRing: 'ring-2 ring-purple-500 bg-purple-50/20',
       };
@@ -251,29 +179,19 @@ export const DashboardPimpinanView: React.FC = () => {
     if (u.includes('RPL')) {
       return {
         badge: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-        iconBg: 'bg-emerald-50 text-emerald-700 border-emerald-200',
         progressBar: 'bg-emerald-600',
         activeRing: 'ring-2 ring-emerald-500 bg-emerald-50/20',
       };
     }
-    if (u.includes('UMUM')) {
-      return {
-        badge: 'bg-indigo-50 text-indigo-800 border-indigo-200',
-        iconBg: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-        progressBar: 'bg-indigo-600',
-        activeRing: 'ring-2 ring-indigo-500 bg-indigo-50/20',
-      };
-    }
     return {
       badge: 'bg-slate-100 text-slate-800 border-slate-200',
-      iconBg: 'bg-slate-100 text-slate-700 border-slate-200',
       progressBar: 'bg-slate-700',
       activeRing: 'ring-2 ring-slate-500 bg-slate-50/20',
     };
   };
 
-  // Filter logs for leadership table
-  const filteredLogSchedules = schedules
+  // Filter schedules for table
+  const filteredLogSchedules = effectiveSchedules
     .filter((s) => {
       if (selectedDeptFilter === 'ALL') return true;
       const upper = selectedDeptFilter.toUpperCase();
@@ -282,7 +200,7 @@ export const DashboardPimpinanView: React.FC = () => {
       const matchClassDept = (classObj?.department || '').toUpperCase() === upper;
       return matchScheduleDept || matchClassDept;
     })
-    .slice(0, 10);
+    .slice(0, 15);
 
   return (
     <div className="p-6 md:p-8 space-y-7 max-w-7xl mx-auto">
@@ -297,7 +215,7 @@ export const DashboardPimpinanView: React.FC = () => {
             Dashboard Pimpinan & Manajemen Sekolah
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Analisis makro keterlaksanaan jam pembelajaran guru, ketepatan waktu, dan pemenuhan kurikulum sekolah.
+            Analisis makro status pelaksanaan jadwal pembelajaran (Berlangsung, Selesai, Terjadwal) per program keahlian.
           </p>
         </div>
 
@@ -366,8 +284,8 @@ export const DashboardPimpinanView: React.FC = () => {
         </button>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+      {/* KPI Cards: 3 Statuses */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-5">
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
@@ -381,61 +299,58 @@ export const DashboardPimpinanView: React.FC = () => {
             {completionPercentage}%
           </p>
           <p className="text-xs text-slate-500 mt-1">
-            {verifiedOrPresentTotal} dari {totalSlots} kelas terverifikasi / aktif
+            {selesaiSlots + berlangsungSlots} dari {totalSlots} sesi telah / sedang berjalan
           </p>
+        </div>
+
+        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs ring-2 ring-emerald-500/20">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
+              Sedang Berlangsung
+            </span>
+            <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <Activity className="w-4 h-4 animate-pulse" />
+            </div>
+          </div>
+          <p className="text-3xl font-black text-emerald-700 mt-2 tabular-nums">
+            {berlangsungSlots} Sesi
+          </p>
+          <p className="text-xs text-emerald-600 mt-1">Sedang aktif di kelas / lab / bengkel</p>
         </div>
 
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Ketepatan Waktu Guru
+              Selesai Terlaksana
             </span>
-            <div className="w-9 h-9 rounded-full bg-cyan-50 text-cyan-600 flex items-center justify-center">
+            <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-3xl font-black text-slate-900 mt-2 tabular-nums">
-            {teacherPunctuality}%
+          <p className="text-3xl font-black text-slate-800 mt-2 tabular-nums">
+            {selesaiSlots} Sesi
           </p>
-          <p className="text-xs text-slate-500 mt-1">Tingkat kehadiran guru di jam ke-1</p>
+          <p className="text-xs text-slate-500 mt-1">Sesi jam pelajaran yang telah tuntas</p>
         </div>
 
         <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Guru Berhalangan
+            <span className="text-xs font-bold text-sky-700 uppercase tracking-wider">
+              Jadwal Terjadwal
             </span>
-            <div className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center">
-              <AlertTriangle className="w-4 h-4" />
+            <div className="w-9 h-9 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center">
+              <Calendar className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-3xl font-black text-amber-700 mt-2 tabular-nums">
-            {excusedSlots} Guru
+          <p className="text-3xl font-black text-sky-700 mt-2 tabular-nums">
+            {terjadwalSlots} Sesi
           </p>
-          <p className="text-xs text-slate-500 mt-1">Izin resmi atau dinas luar sekolah</p>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-              Inval Terfasilitasi
-            </span>
-            <div className="w-9 h-9 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center">
-              <FileCheck className="w-4 h-4" />
-            </div>
-          </div>
-          <p className="text-3xl font-black text-blue-700 mt-2 tabular-nums">
-            {substituteSlots} Kelas
-          </p>
-          <p className="text-xs text-slate-500 mt-1">Didampingi guru pengganti piket</p>
+          <p className="text-xs text-sky-600 mt-1">Menunggu jam pelaksanaan berikutnya</p>
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* Department Breakdown (Keterlaksanaan KBM per Program Keahlian) */}
-      {/* ======================================================== */}
+      {/* Department Breakdown */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-5">
-        {/* Header Section */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div>
             <div className="flex items-center gap-2">
@@ -443,18 +358,17 @@ export const DashboardPimpinanView: React.FC = () => {
                 <Layers className="w-4 h-4" />
               </div>
               <h2 className="text-base font-extrabold text-slate-900 tracking-tight">
-                Keterlaksanaan KBM per Program Keahlian (SMKN 1 Tegalsari)
+                Status Pembelajaran per Program Keahlian
               </h2>
               <span className="text-xs font-extrabold bg-cyan-50 text-cyan-800 border border-cyan-200 px-2.5 py-0.5 rounded-full">
                 {deptStats.length} Program Keahlian
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Pantau rasio keterlaksanaan pembelajaran seluruh jurusan yang terdaftar di SMKN 1 Tegalsari secara realtime. Klik salah satu jurusan untuk menyaring atensi piket.
+              Rasio status jadwal pembelajaran pada masing-masing jurusan (Berlangsung, Selesai, Terjadwal).
             </p>
           </div>
 
-          {/* Quick Search & Reset */}
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -463,226 +377,77 @@ export const DashboardPimpinanView: React.FC = () => {
                 placeholder="Cari jurusan..."
                 value={deptSearchQuery}
                 onChange={(e) => setDeptSearchQuery(e.target.value)}
-                className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 w-44 sm:w-56"
+                className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-cyan-500 w-44"
               />
             </div>
-            {selectedDeptFilter !== 'ALL' && (
-              <button
-                onClick={() => setSelectedDeptFilter('ALL')}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer"
-                title="Tampilkan semua data di tabel log"
-              >
-                <span>Reset Filter</span>
-              </button>
-            )}
           </div>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">
-            Filter Cepat:
-          </span>
-          <button
-            onClick={() => setSelectedDeptFilter('ALL')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-              selectedDeptFilter === 'ALL'
-                ? 'bg-slate-900 text-white shadow-2xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Semua Jurusan ({deptStats.length})
-          </button>
-          {deptStats.map((d) => {
-            const isSelected = selectedDeptFilter === d.code;
-            return (
-              <button
-                key={d.code}
-                onClick={() => setSelectedDeptFilter(isSelected ? 'ALL' : d.code)}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                  isSelected
-                    ? 'bg-cyan-700 text-white shadow-2xs'
-                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
-                }`}
-              >
-                <span>{d.code}</span>
-                <span
-                  className={`text-[10px] px-1 rounded ${
-                    isSelected ? 'bg-cyan-800 text-cyan-100' : 'bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  {d.percentage}%
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Department Cards Grid - Displays ALL Departments */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-1">
-          {filteredDeptStats.map((d) => {
-            const IconComponent = getDeptIcon(d.code);
-            const theme = getDeptColorTheme(d.code);
-            const isSelected = selectedDeptFilter === d.code;
-
-            // Status badge color based on percentage
-            let statusBadge = 'bg-slate-100 text-slate-700 border-slate-200';
-            if (d.total > 0 && d.percentage === 100) {
-              statusBadge = 'bg-emerald-50 text-emerald-800 border-emerald-300';
-            } else if (d.total > 0 && d.percentage >= 60) {
-              statusBadge = 'bg-cyan-50 text-cyan-800 border-cyan-300';
-            } else if (d.total > 0 && d.percentage > 0) {
-              statusBadge = 'bg-amber-50 text-amber-800 border-amber-300';
-            } else if (d.total === 0) {
-              statusBadge = 'bg-slate-100 text-slate-500 border-slate-200';
-            }
+        {/* Grid per jurusan */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredDeptStats.map((dept) => {
+            const theme = getDeptColorTheme(dept.code);
+            const isSelected = selectedDeptFilter.toUpperCase() === dept.code.toUpperCase();
 
             return (
               <div
-                key={d.code}
-                onClick={() => setSelectedDeptFilter(isSelected ? 'ALL' : d.code)}
-                className={`bg-white rounded-2xl p-5 border transition-all duration-200 cursor-pointer hover:shadow-md ${
-                  isSelected
-                    ? `${theme.activeRing} border-cyan-500 shadow-sm`
-                    : 'border-slate-200/90 hover:border-slate-300 shadow-2xs'
+                key={dept.code}
+                onClick={() =>
+                  setSelectedDeptFilter(isSelected ? 'ALL' : dept.code)
+                }
+                className={`p-4 rounded-2xl border border-slate-200/90 transition-all cursor-pointer hover:shadow-md ${
+                  isSelected ? theme.activeRing : 'bg-slate-50/50 hover:bg-white'
                 }`}
               >
-                {/* Header Card */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${theme.iconBg}`}
-                    >
-                      <IconComponent className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`text-xs font-mono font-black px-2 py-0.5 rounded border ${theme.badge}`}
-                        >
-                          {d.code}
-                        </span>
-                        {isSelected && (
-                          <span className="text-[10px] font-bold bg-cyan-700 text-white px-1.5 py-0.2 rounded-full">
-                            Terpilih
-                          </span>
-                        )}
-                      </div>
-                      <h3
-                        className="font-extrabold text-sm text-slate-900 mt-1 leading-snug line-clamp-1"
-                        title={d.name}
-                      >
-                        {d.name}
-                      </h3>
-                    </div>
-                  </div>
-
-                  {/* Percentage Pill */}
-                  <div
-                    className={`shrink-0 px-2.5 py-1 rounded-xl text-xs font-extrabold border ${statusBadge}`}
-                  >
-                    {d.percentage}%
-                  </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-md border ${theme.badge}`}>
+                    {dept.code}
+                  </span>
+                  <span className="text-xs font-black text-slate-800 tabular-nums">
+                    {dept.percentage}% Terlaksana
+                  </span>
                 </div>
 
-                {/* Description or Subtitle */}
-                {d.description && (
-                  <p className="text-[11px] text-slate-500 mt-2 line-clamp-1" title={d.description}>
-                    {d.description}
-                  </p>
-                )}
+                <h3 className="font-extrabold text-sm text-slate-900 mt-2 truncate" title={dept.name}>
+                  {dept.name}
+                </h3>
 
-                {/* Progress Bar */}
-                <div className="w-full bg-slate-100 h-2.5 rounded-full mt-3.5 overflow-hidden p-0.5 border border-slate-200/60">
+                {/* Progress bar */}
+                <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden mt-3">
                   <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      d.percentage === 100
-                        ? 'bg-emerald-500'
-                        : d.percentage >= 50
-                        ? theme.progressBar
-                        : d.percentage > 0
-                        ? 'bg-amber-500'
-                        : 'bg-slate-300'
-                    }`}
-                    style={{ width: `${Math.max(d.percentage, d.total === 0 ? 0 : 4)}%` }}
+                    className={`h-full ${theme.progressBar} transition-all duration-500`}
+                    style={{ width: `${dept.percentage}%` }}
                   />
                 </div>
 
-                {/* Metrics Breakdown Grid */}
-                <div className="grid grid-cols-2 gap-2 mt-3.5 pt-3 border-t border-slate-100 text-xs">
-                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block font-semibold uppercase">
-                      KBM Terlaksana
-                    </span>
-                    <span className="font-extrabold text-slate-800 tabular-nums">
-                      {d.completed}{' '}
-                      <span className="text-slate-400 font-normal">/ {d.total} sesi</span>
-                    </span>
+                {/* Status counts */}
+                <div className="grid grid-cols-3 gap-1 pt-3 text-center text-[11px] font-bold">
+                  <div className="bg-emerald-50 text-emerald-800 rounded-lg py-1 border border-emerald-200">
+                    <span className="block text-[9px] font-normal text-emerald-600">Berlangsung</span>
+                    {dept.berlangsung}
                   </div>
-
-                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block font-semibold uppercase">
-                      Rombel Kelas
-                    </span>
-                    <span className="font-extrabold text-slate-800 tabular-nums">
-                      {d.classCount} Kelas
-                    </span>
+                  <div className="bg-slate-100 text-slate-700 rounded-lg py-1 border border-slate-200">
+                    <span className="block text-[9px] font-normal text-slate-500">Selesai</span>
+                    {dept.selesai}
                   </div>
-                </div>
-
-                {/* Attendance Mini Indicator */}
-                <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px]">
-                  {d.total > 0 ? (
-                    <>
-                      {d.piketHadir > 0 && (
-                        <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-emerald-200">
-                          <Check className="w-2.5 h-2.5" /> {d.piketHadir} Piket Terverifikasi
-                        </span>
-                      )}
-                      {d.invalTerisi > 0 && (
-                        <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-blue-200">
-                          {d.invalTerisi} Inval
-                        </span>
-                      )}
-                      {d.izinSakit > 0 && (
-                        <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-amber-200">
-                          {d.izinSakit} Izin
-                        </span>
-                      )}
-                      {d.completed === 0 && (
-                        <span className="text-slate-400 italic text-[11px]">
-                          Menunggu konfirmasi / verifikasi
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-slate-400 text-[11px] italic">
-                      Tidak ada slot jadwal hari ini
-                    </span>
-                  )}
+                  <div className="bg-sky-50 text-sky-800 rounded-lg py-1 border border-sky-200">
+                    <span className="block text-[9px] font-normal text-sky-600">Terjadwal</span>
+                    {dept.terjadwal}
+                  </div>
                 </div>
               </div>
             );
           })}
-
-          {filteredDeptStats.length === 0 && (
-            <div className="col-span-full py-8 text-center text-slate-400 text-xs space-y-1">
-              <p className="font-semibold text-slate-600">Jurusan tidak ditemukan</p>
-              <p>Tidak ada program keahlian yang cocok dengan kata kunci "{deptSearchQuery}".</p>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* Important Attention Table for Leadership */}
-      {/* ======================================================== */}
+      {/* Table Log Schedules */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-extrabold text-slate-900 tracking-tight">
-                Log Atensi Khusus Piket Hari Ini
+                Daftar Jadwal & Status Pelaksanaan Pelajaran
               </h2>
               {selectedDeptFilter !== 'ALL' && (
                 <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-200">
@@ -691,14 +456,14 @@ export const DashboardPimpinanView: React.FC = () => {
               )}
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Daftar pemantauan jadwal KBM dan penanganan guru piket di kelas.
+              Status real-time setiap jam pertemuan (Berlangsung, Selesai, Terjadwal).
             </p>
           </div>
 
           {selectedDeptFilter !== 'ALL' && (
             <button
               onClick={() => setSelectedDeptFilter('ALL')}
-              className="text-xs font-semibold text-cyan-700 hover:text-cyan-900 underline"
+              className="text-xs font-semibold text-cyan-700 hover:text-cyan-900 underline cursor-pointer"
             >
               Lihat Semua Jurusan
             </button>
@@ -713,16 +478,15 @@ export const DashboardPimpinanView: React.FC = () => {
                 <th className="py-2.5 px-3">JURUSAN</th>
                 <th className="py-2.5 px-3">GURU MAPEL</th>
                 <th className="py-2.5 px-3">KELAS & RUANG</th>
-                <th className="py-2.5 px-3">STATUS & CATATAN PIKET</th>
-                <th className="py-2.5 px-3">PENANGANAN INVAL</th>
+                <th className="py-2.5 px-3 text-center">STATUS JADWAL</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredLogSchedules.map((s) => {
-                const rec = attendanceRecords[s.id];
+                const status = getScheduleStatus(s);
                 return (
                   <tr key={s.id} className="hover:bg-slate-50/70">
-                    <td className="py-2.5 px-3 font-semibold text-slate-700 tabular-nums">
+                    <td className="py-2.5 px-3 font-semibold text-slate-700 tabular-nums whitespace-nowrap">
                       {s.timeRange || `${s.startTime} - ${s.endTime}`}
                     </td>
                     <td className="py-2.5 px-3">
@@ -740,26 +504,8 @@ export const DashboardPimpinanView: React.FC = () => {
                       <div className="font-semibold text-slate-800">{s.className}</div>
                       <div className="text-[11px] text-slate-400">{s.roomName}</div>
                     </td>
-                    <td className="py-2.5 px-3">
-                      {rec?.piketConfirmation?.status === 'terverifikasi_hadir' ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 font-bold text-[11px]">
-                          <Check className="w-3 h-3" /> Terverifikasi Hadir
-                        </span>
-                      ) : rec?.teacherConfirmation?.status === 'izin' ||
-                        rec?.teacherConfirmation?.status === 'sakit' ? (
-                        <span className="inline-flex items-center gap-1 text-amber-700 font-bold text-[11px]">
-                          <AlertTriangle className="w-3 h-3" /> Berhalangan ({rec.teacherConfirmation.status})
-                        </span>
-                      ) : (
-                        <span className="text-slate-500 text-[11px]">
-                          {rec?.piketConfirmation?.notes || 'Menunggu verifikasi lapangan'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 font-semibold text-blue-700">
-                      {rec?.piketConfirmation?.substituteTeacherName || (
-                        <span className="text-slate-400 font-normal">Kelas Reguler Normal</span>
-                      )}
+                    <td className="py-2.5 px-3 text-center whitespace-nowrap">
+                      <ScheduleStatusBadge status={status} size="sm" />
                     </td>
                   </tr>
                 );
@@ -767,7 +513,7 @@ export const DashboardPimpinanView: React.FC = () => {
 
               {filteredLogSchedules.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                  <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
                     Tidak ada jadwal yang terdaftar{' '}
                     {selectedDeptFilter !== 'ALL' ? `untuk jurusan ${selectedDeptFilter}` : ''}.
                   </td>

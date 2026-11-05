@@ -1,6 +1,6 @@
 {
-  "summary": "Revisi rencana implementasi SIMPATI SMKN 1 Tegalsari: integrasi alur jurnal & materi guru mapel, tombol mandiri status hadir/izin untuk guru & piket, serta penguatan peran guru piket sebagai verifikator utama dengan opsi penugasan guru pengganti dan modul tugas mandiri.",
-  "updatedAt": "2026-10-13T02:48:04.112081189Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Pembaruan konsep sistem SIMPATI SMKN 1 Tegalsari:\n1. Menghapus seluruh alur konfirmasi guru hadir mandiri, jurnal KBM modal, validasi guru piket, dan penugasan inval di semua menu.\n2. Mengubah status jadwal pelajaran menjadi tepat 3 status real-time: 'Berlangsung', 'Selesai', dan 'Terjadwal'.\n3. Memperbarui seluruh tampilan (Monitoring Pembelajaran, Pembelajaran Saya, Papan Guru Piket, Dashboard Utama, Dashboard Pimpinan, Laporan & Cetak Berita Acara, serta Mode TV Sekolah) dengan badge status visual yang modern dan konsisten.\n4. Memverifikasi kelancaran kompilasi dan linting TypeScript dengan hasil 100% bebas error.",
+  "updatedAt":  "2026-10-27T03:24:29.451377080Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

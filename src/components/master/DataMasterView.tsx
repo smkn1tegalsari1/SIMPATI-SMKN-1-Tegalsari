@@ -28,6 +28,7 @@ import {
   Sliders,
   Copy,
   Download,
+  RotateCcw,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Teacher, Subject, SchoolClass, Room, Department, AcademicYear, ScheduleItem, ScheduleWeekType } from '../../types';
@@ -94,18 +95,21 @@ export const DataMasterView: React.FC = () => {
     bulkDeleteSchedules,
     bulkUpdateSchedules,
     clearAllSchedules,
+    clearTableData,
     importSchedules,
     importClassSchedules,
+    resetAllData,
   } = useApp();
 
   // Delete Confirmation & In-App Dialog State
   const [deleteTarget, setDeleteTarget] = useState<{
-    type: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua_jadwal';
+    type: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua_jadwal' | 'kosongkan_tab' | 'reset_database';
     id?: string;
     title: string;
     subtitle?: string;
     badge?: string;
     warningNote?: string;
+    tabKey?: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua';
   } | null>(null);
   const [deleteAlertModal, setDeleteAlertModal] = useState<string | null>(null);
   const [toastNotification, setToastNotification] = useState<string | null>(null);
@@ -125,48 +129,58 @@ export const DataMasterView: React.FC = () => {
         case 'guru':
           if (deleteTarget.id) {
             deleteTeacher(deleteTarget.id);
-            setToastNotification(`Data Guru "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Data Guru "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'mapel':
           if (deleteTarget.id) {
             deleteSubject(deleteTarget.id);
-            setToastNotification(`Mata Pelajaran "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Mata Pelajaran "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'jurusan':
           if (deleteTarget.id) {
             deleteDepartment(deleteTarget.id);
-            setToastNotification(`Jurusan "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Jurusan "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'kelas':
           if (deleteTarget.id) {
             deleteClass(deleteTarget.id);
-            setToastNotification(`Kelas "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Kelas "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'ruang':
           if (deleteTarget.id) {
             deleteRoom(deleteTarget.id);
-            setToastNotification(`Ruangan "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Ruangan "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'tahun_pelajaran':
           if (deleteTarget.id) {
             deleteAcademicYear(deleteTarget.id);
-            setToastNotification(`Tahun Pelajaran "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Tahun Pelajaran "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'jadwal':
           if (deleteTarget.id) {
             deleteSchedule(deleteTarget.id);
-            setToastNotification(`Jadwal "${deleteTarget.title}" berhasil dihapus.`);
+            setToastNotification(`Jadwal "${deleteTarget.title}" berhasil dihapus secara permanen.`);
           }
           break;
         case 'semua_jadwal':
           clearAllSchedules();
-          setToastNotification('Seluruh jadwal pelajaran berhasil dikosongkan.');
+          setToastNotification('Seluruh jadwal pelajaran berhasil dikosongkan secara permanen.');
+          break;
+        case 'kosongkan_tab':
+          if (deleteTarget.tabKey) {
+            clearTableData(deleteTarget.tabKey);
+            setToastNotification(`Seluruh data ${deleteTarget.title} berhasil dikosongkan secara permanen.`);
+          }
+          break;
+        case 'reset_database':
+          resetAllData();
+          setToastNotification('Database berhasil dikembalikan ke data awal sistem.');
           break;
       }
     } finally {
@@ -946,6 +960,53 @@ export const DataMasterView: React.FC = () => {
           <CalendarDays className="w-4 h-4 text-amber-500" />
           <span>Jadwal Pelajaran ({schedules.length})</span>
         </button>
+
+        {/* Tombol Pemeliharaan Database: Kosongkan Tab / Reset Data Awal */}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => {
+              const currentTabLabels: Record<string, string> = {
+                guru: 'Data Guru',
+                mapel: 'Data Mata Pelajaran',
+                jurusan: 'Data Jurusan',
+                kelas: 'Data Kelas & Rombel',
+                ruang: 'Data Ruang & Bengkel',
+                tahun_pelajaran: 'Data Tahun Pelajaran',
+                jadwal: 'Jadwal Pelajaran',
+              };
+              setDeleteTarget({
+                type: 'kosongkan_tab',
+                tabKey: activeTab,
+                title: currentTabLabels[activeTab] || 'Data Master',
+                subtitle: `Tindakan ini akan mengosongkan seluruh isi ${currentTabLabels[activeTab]} secara permanen dari server database dan memori perangkat.`,
+                badge: currentTabLabels[activeTab],
+                warningNote: 'Data yang telah dikosongkan tidak akan muncul lagi setelah direfresh. Anda dapat mengimpor data baru kapan pun.'
+              });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-rose-700 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
+            title="Kosongkan seluruh data pada tab ini secara permanen"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Kosongkan Data Tab Ini</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setDeleteTarget({
+                type: 'reset_database',
+                title: 'Seluruh Database SIMPATI',
+                subtitle: 'Mengembalikan seluruh tabel master ke data demo awal resmi SMKN 1 Tegalsari.',
+                badge: 'Reset Database',
+                warningNote: 'PERHATIAN: Tindakan ini akan menimpa seluruh perubahan saat ini dengan dataset standar sekolah.'
+              });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold rounded-xl transition cursor-pointer"
+            title="Kembalikan database ke data bawaan sistem"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden md:inline">Reset Data Bawaan</span>
+          </button>
+        </div>
       </div>
 
       {/* 1. TAB: DATA GURU */}
@@ -3719,10 +3780,14 @@ export const DataMasterView: React.FC = () => {
                 <h3 className="text-base font-extrabold text-slate-900 leading-snug">
                   {deleteTarget.type === 'semua_jadwal'
                     ? 'Konfirmasi Kosongkan Jadwal'
+                    : deleteTarget.type === 'kosongkan_tab'
+                    ? `Konfirmasi Kosongkan ${deleteTarget.title}`
+                    : deleteTarget.type === 'reset_database'
+                    ? 'Konfirmasi Reset Database'
                     : 'Konfirmasi Hapus Data'}
                 </h3>
                 <p className="text-xs text-slate-600 mt-0.5">
-                  Tindakan ini akan menghapus data yang dipilih dari sistem.
+                  Tindakan ini akan menghapus data yang dipilih dari sistem secara permanen.
                 </p>
               </div>
               <button
@@ -3797,6 +3862,10 @@ export const DataMasterView: React.FC = () => {
                 <span>
                   {deleteTarget.type === 'semua_jadwal'
                     ? 'Ya, Bersihkan Jadwal'
+                    : deleteTarget.type === 'kosongkan_tab'
+                    ? 'Ya, Kosongkan Tab Ini'
+                    : deleteTarget.type === 'reset_database'
+                    ? 'Ya, Reset Database'
                     : 'Ya, Hapus Data Ini'}
                 </span>
               </button>

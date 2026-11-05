@@ -31,7 +31,7 @@ import { ScheduleItem } from '../../types';
 
 interface TimeStatusResult {
   status: 'sedang_berlangsung' | 'sudah_selesai' | 'terjadwal';
-  label: 'Sedang Berlangsung' | 'Sudah Selesai' | 'Terjadwal';
+  label: 'Berlangsung' | 'Selesai' | 'Terjadwal' | 'Sedang Berlangsung' | 'Sudah Selesai';
   badgeBg: string;
   badgeText: string;
   badgeBorder: string;
@@ -100,15 +100,15 @@ export const computeScheduleStatus = (
     return {
       status: 'terjadwal',
       label: 'Terjadwal',
-      badgeBg: 'bg-blue-500/15',
-      badgeText: 'text-blue-300',
-      badgeBorder: 'border-blue-500/30',
-      dotColor: 'bg-blue-400',
+      badgeBg: 'bg-sky-500/15',
+      badgeText: 'text-sky-300',
+      badgeBorder: 'border-sky-500/30',
+      dotColor: 'bg-sky-400',
     };
   } else if (currentTotalMinutes >= startMinutes && currentTotalMinutes <= endMinutes) {
     return {
       status: 'sedang_berlangsung',
-      label: 'Sedang Berlangsung',
+      label: 'Berlangsung',
       badgeBg: 'bg-emerald-500/20',
       badgeText: 'text-emerald-300',
       badgeBorder: 'border-emerald-500/40',
@@ -117,11 +117,11 @@ export const computeScheduleStatus = (
   } else {
     return {
       status: 'sudah_selesai',
-      label: 'Sudah Selesai',
+      label: 'Selesai',
       badgeBg: 'bg-slate-700/50',
-      badgeText: 'text-slate-400',
+      badgeText: 'text-slate-300',
       badgeBorder: 'border-slate-600/40',
-      dotColor: 'bg-slate-500',
+      dotColor: 'bg-slate-400',
     };
   }
 };
@@ -140,6 +140,8 @@ export const ModeTVSekolahView: React.FC = () => {
     departments,
     classes,
     setActiveMenu,
+    isAuthenticated,
+    currentUser,
   } = useApp();
 
   // View presentation mode: 'table' (large readable data rows) or 'cards' (high-contrast grid)
@@ -447,12 +449,24 @@ export const ModeTVSekolahView: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setActiveMenu('dashboard')}
-                title="Kembali ke Dashboard Admin"
-                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 transition shadow-sm"
+                onClick={() => {
+                  if (!isAuthenticated) {
+                    setActiveMenu('monitoring');
+                  } else if (currentUser.role === 'admin') {
+                    setActiveMenu('dashboard');
+                  } else if (currentUser.role === 'pimpinan') {
+                    setActiveMenu('dashboard_pimpinan');
+                  } else if (currentUser.role === 'piket') {
+                    setActiveMenu('guru_piket');
+                  } else {
+                    setActiveMenu('pembelajaran_saya');
+                  }
+                }}
+                title={!isAuthenticated ? 'Kembali ke Monitoring Pembelajaran' : 'Kembali ke Menu Utama'}
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold border border-slate-700 transition shadow-sm cursor-pointer"
               >
-                <ArrowLeft className="w-4 h-4" />
-                <span className="hidden md:inline">Kembali</span>
+                <ArrowLeft className="w-4 h-4 text-cyan-400" />
+                <span className="hidden md:inline">{!isAuthenticated ? 'Ke Monitoring' : 'Kembali'}</span>
               </button>
             </div>
           </div>
@@ -463,7 +477,7 @@ export const ModeTVSekolahView: React.FC = () => {
           STATISTICS SUMMARY STRIP
       ========================================================== */}
       <section className="px-5 py-3 md:px-8 bg-[#061421] border-b border-slate-800/60 shrink-0">
-        <div className="max-w-[1920px] mx-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="max-w-[1920px] mx-auto grid grid-cols-2 sm:grid-cols-4 gap-3">
           {/* Card Total */}
           <div className="bg-[#0B1E2E] border border-slate-800 rounded-2xl p-3 flex items-center justify-between shadow-sm">
             <div>
@@ -473,7 +487,7 @@ export const ModeTVSekolahView: React.FC = () => {
             <BookOpen className="w-7 h-7 text-cyan-400/60" />
           </div>
 
-          {/* Card Sedang Berlangsung */}
+          {/* Card Berlangsung */}
           <div
             onClick={() => setStatusFilter(statusFilter === 'sedang_berlangsung' ? 'ALL' : 'sedang_berlangsung')}
             className={`border rounded-2xl p-3 flex items-center justify-between cursor-pointer transition shadow-sm ${
@@ -485,30 +499,14 @@ export const ModeTVSekolahView: React.FC = () => {
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Sedang Berlangsung</p>
+                <p className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Berlangsung</p>
               </div>
               <p className="text-xl md:text-2xl font-black text-emerald-300">{stats.sedangBerlangsung}</p>
             </div>
             <CheckCircle2 className="w-7 h-7 text-emerald-400" />
           </div>
 
-          {/* Card Terjadwal */}
-          <div
-            onClick={() => setStatusFilter(statusFilter === 'terjadwal' ? 'ALL' : 'terjadwal')}
-            className={`border rounded-2xl p-3 flex items-center justify-between cursor-pointer transition shadow-sm ${
-              statusFilter === 'terjadwal'
-                ? 'bg-blue-950/80 border-blue-500 ring-2 ring-blue-500/30'
-                : 'bg-[#0B1E32] border-blue-900/50 hover:border-blue-500/60'
-            }`}
-          >
-            <div>
-              <p className="text-[11px] font-bold text-blue-400 uppercase tracking-wider">Terjadwal</p>
-              <p className="text-xl md:text-2xl font-black text-blue-300">{stats.terjadwal}</p>
-            </div>
-            <Clock className="w-7 h-7 text-blue-400/70" />
-          </div>
-
-          {/* Card Sudah Selesai */}
+          {/* Card Selesai */}
           <div
             onClick={() => setStatusFilter(statusFilter === 'sudah_selesai' ? 'ALL' : 'sudah_selesai')}
             className={`border rounded-2xl p-3 flex items-center justify-between cursor-pointer transition shadow-sm ${
@@ -518,32 +516,26 @@ export const ModeTVSekolahView: React.FC = () => {
             }`}
           >
             <div>
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Sudah Selesai</p>
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Selesai</p>
               <p className="text-xl md:text-2xl font-black text-slate-300">{stats.sudahSelesai}</p>
             </div>
             <Check className="w-7 h-7 text-slate-500" />
           </div>
 
-          {/* Card Guru Hadir */}
-          <div className="bg-[#0B1E2E] border border-slate-800 rounded-2xl p-3 flex items-center justify-between shadow-sm">
+          {/* Card Terjadwal */}
+          <div
+            onClick={() => setStatusFilter(statusFilter === 'terjadwal' ? 'ALL' : 'terjadwal')}
+            className={`border rounded-2xl p-3 flex items-center justify-between cursor-pointer transition shadow-sm ${
+              statusFilter === 'terjadwal'
+                ? 'bg-sky-950/80 border-sky-500 ring-2 ring-sky-500/30'
+                : 'bg-[#0B1E32] border-sky-900/50 hover:border-sky-500/60'
+            }`}
+          >
             <div>
-              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Guru Hadir</p>
-              <p className="text-xl md:text-2xl font-black text-amber-400">
-                {stats.guruHadir} <span className="text-xs text-slate-500 font-normal">/ {stats.total}</span>
-              </p>
+              <p className="text-[11px] font-bold text-sky-400 uppercase tracking-wider">Terjadwal</p>
+              <p className="text-xl md:text-2xl font-black text-sky-300">{stats.terjadwal}</p>
             </div>
-            <UserCheck className="w-7 h-7 text-amber-400/80" />
-          </div>
-
-          {/* Card Terverifikasi Piket */}
-          <div className="bg-[#0B1E2E] border border-slate-800 rounded-2xl p-3 flex items-center justify-between shadow-sm">
-            <div>
-              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Verifikasi Piket</p>
-              <p className="text-xl md:text-2xl font-black text-cyan-400">
-                {stats.piketTerverifikasi} <span className="text-xs text-slate-500 font-normal">/ {stats.total}</span>
-              </p>
-            </div>
-            <ShieldCheck className="w-7 h-7 text-cyan-400/80" />
+            <Clock className="w-7 h-7 text-sky-400/70" />
           </div>
         </div>
       </section>
@@ -778,9 +770,7 @@ export const ModeTVSekolahView: React.FC = () => {
                     <th className="py-4 px-5 min-w-[200px]">Nama Guru</th>
                     <th className="py-4 px-4 min-w-[110px]">Kelas</th>
                     <th className="py-4 px-4 min-w-[130px]">Ruangan</th>
-                    <th className="py-4 px-4 min-w-[130px] text-center">Guru Hadir</th>
-                    <th className="py-4 px-4 min-w-[180px] text-center">Konfirmasi Guru Piket</th>
-                    <th className="py-4 px-5 min-w-[180px] text-center">Status</th>
+                    <th className="py-4 px-5 min-w-[180px] text-center">Status Jadwal</th>
                     <th className="py-4 px-3 w-16 text-center">Aksi</th>
                   </tr>
                 </thead>
@@ -873,28 +863,7 @@ export const ModeTVSekolahView: React.FC = () => {
                           </div>
                         </td>
 
-                        {/* 6. Guru Hadir */}
-                        <td className="py-4 px-4 text-center">
-                          <span
-                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border shadow-xs ${item.teacherPresence.badge}`}
-                          >
-                            <item.teacherPresence.icon className="w-3.5 h-3.5 shrink-0" />
-                            <span>{item.teacherPresence.label}</span>
-                          </span>
-                        </td>
-
-                        {/* 7. Konfirmasi Guru Piket */}
-                        <td className="py-4 px-4 text-center">
-                          <span
-                            className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border shadow-xs max-w-[200px] truncate ${item.piketPresence.badge}`}
-                            title={item.piketPresence.label}
-                          >
-                            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                            <span className="truncate">{item.piketPresence.label}</span>
-                          </span>
-                        </td>
-
-                        {/* 8. Status (sedang berlangsung / sudah selesai / terjadwal) */}
+                        {/* Status (Berlangsung / Selesai / Terjadwal) */}
                         <td className="py-4 px-5 text-center">
                           <div
                             className={`inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-black border shadow-sm ${item.timeStatus.badgeBg} ${item.timeStatus.badgeText} ${item.timeStatus.badgeBorder}`}
@@ -991,21 +960,12 @@ export const ModeTVSekolahView: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* Guru Hadir & Konfirmasi Piket Strip */}
-                  <div className="pt-3 border-t border-slate-800/80 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-400 font-semibold">Guru Hadir:</span>
-                      <span className={`px-2.5 py-0.5 rounded-lg font-black border text-[11px] ${item.teacherPresence.badge}`}>
-                        {item.teacherPresence.label}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-400 font-semibold">Konfirmasi Piket:</span>
-                      <span className={`px-2.5 py-0.5 rounded-lg font-black border text-[11px] truncate max-w-[150px] ${item.piketPresence.badge}`}>
-                        {item.piketPresence.label}
-                      </span>
-                    </div>
+                  {/* Status Jadwal Strip */}
+                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-semibold">Status Jadwal:</span>
+                    <span className={`px-2.5 py-0.5 rounded-lg font-black border text-[11px] ${item.timeStatus.badgeBg} ${item.timeStatus.badgeText} ${item.timeStatus.badgeBorder}`}>
+                      {item.timeStatus.label}
+                    </span>
                   </div>
                 </div>
               );
@@ -1102,14 +1062,14 @@ export const ModeTVSekolahView: React.FC = () => {
             {/* Modal Details Grid */}
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="bg-[#0B1E2E] p-3 rounded-2xl border border-slate-800">
-                <span className="text-slate-400 font-semibold block">Jam Pelajaran:</span>
+                <span className="text-slate-400 font-semibold block">Jam & Waktu:</span>
                 <span className="text-sm font-bold text-white mt-1 block">
                   Jam Ke-{detailSchedule.periodIndex} ({detailSchedule.timeRange})
                 </span>
               </div>
 
               <div className="bg-[#0B1E2E] p-3 rounded-2xl border border-slate-800">
-                <span className="text-slate-400 font-semibold block">Status Waktu:</span>
+                <span className="text-slate-400 font-semibold block">Status Jadwal:</span>
                 {(() => {
                   const s = computeScheduleStatus(detailSchedule, effectiveHour, effectiveMinute);
                   return (
@@ -1122,20 +1082,16 @@ export const ModeTVSekolahView: React.FC = () => {
               </div>
 
               <div className="bg-[#0B1E2E] p-3 rounded-2xl border border-slate-800">
-                <span className="text-slate-400 font-semibold block">Presensi Guru:</span>
-                <span className="text-sm font-bold text-white mt-1 block capitalize">
-                  {attendanceRecords[detailSchedule.id]?.teacherConfirmation?.status || 'Belum Konfirmasi'}
+                <span className="text-slate-400 font-semibold block">Kelas:</span>
+                <span className="text-sm font-bold text-white mt-1 block">
+                  {detailSchedule.className}
                 </span>
               </div>
 
               <div className="bg-[#0B1E2E] p-3 rounded-2xl border border-slate-800">
-                <span className="text-slate-400 font-semibold block">Verifikasi Guru Piket:</span>
-                <span className="text-sm font-bold text-white mt-1 block">
-                  {attendanceRecords[detailSchedule.id]?.piketConfirmation?.status === 'terverifikasi_hadir'
-                    ? 'Terverifikasi Hadir'
-                    : attendanceRecords[detailSchedule.id]?.piketConfirmation?.substituteTeacherName
-                    ? `Inval: ${attendanceRecords[detailSchedule.id]?.piketConfirmation?.substituteTeacherName}`
-                    : 'Menunggu Konfirmasi'}
+                <span className="text-slate-400 font-semibold block">Ruangan & Gedung:</span>
+                <span className="text-sm font-bold text-amber-400 mt-1 block">
+                  {detailSchedule.roomName} ({detailSchedule.roomType || 'Ruang Teori'})
                 </span>
               </div>
             </div>

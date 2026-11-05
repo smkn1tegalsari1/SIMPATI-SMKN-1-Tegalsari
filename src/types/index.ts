@@ -86,6 +86,8 @@ export type ScheduleWeekType =
   | 'P10_NORM_P11_PROD' // Pekan Kelas 10 Normatif Adaptif dan Kelas 11 Produktif
   | 'ALL'; // Berlaku Semua Pekan / Rutin Tiap Minggu
 
+export type ScheduleLessonStatus = 'Berlangsung' | 'Selesai' | 'Terjadwal';
+
 export type TeacherAttendanceStatus =
   | 'belum_konfirmasi'
   | 'hadir'

@@ -17,11 +17,11 @@ import { useApp } from '../../context/AppContext';
 import { ActiveMenu, UserRole } from '../../types';
 
 interface SidebarProps {
-  onOpenDemoLogin: () => void;
+  onOpenDemoLogin?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ onOpenDemoLogin }) => {
-  const { activeMenu, setActiveMenu, currentUser } = useApp();
+export const Sidebar: React.FC<SidebarProps> = () => {
+  const { activeMenu, setActiveMenu, currentUser, logout } = useApp();
 
   const allMenuItems: {
     id: ActiveMenu;
@@ -115,11 +115,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenDemoLogin }) => {
         </div>
 
         <button
-          onClick={onOpenDemoLogin}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-slate-800/80 rounded-lg transition"
+          onClick={logout}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 rounded-xl transition cursor-pointer"
+          title="Keluar dari akun saat ini dan kembali ke halaman login"
         >
-          <LogOut className="w-4 h-4 text-slate-400" />
-          <span>Ganti Akun / Keluar</span>
+          <LogOut className="w-4 h-4 text-rose-400" />
+          <span>Keluar (Logout)</span>
         </button>
       </div>
     </aside>
