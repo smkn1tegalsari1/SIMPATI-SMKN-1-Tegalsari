@@ -998,16 +998,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateUserAccountsAndSync((prev) => prev.map((a) => (a.id === account.id ? account : a)));
     
     // Update active currentUser if it matches
-    if (currentUser.id === account.id || (account.teacherId && currentUser.teacherId === account.teacherId)) {
+    if (
+      currentUser.id === account.id ||
+      (account.teacherId && currentUser.teacherId === account.teacherId) ||
+      (currentUser.username && currentUser.username.toLowerCase() === account.username.toLowerCase())
+    ) {
       const isPiketToday = account.piketDays?.includes(currentDayName) || false;
-      setCurrentUser((prev) => ({
-        ...prev,
+      const updatedUser: CurrentUser = {
+        ...currentUser,
         name: account.name,
         role: account.role as UserRole,
         username: account.username,
+        teacherCode: account.teacherCode || currentUser.teacherCode,
         piketDays: account.piketDays,
         isPiketToday,
-      }));
+      };
+      setCurrentUser(updatedUser);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_session`, JSON.stringify({ user: updatedUser, token: 'session-token' }));
+      } catch (e) {}
     }
 
     // Also sync to teacher if connected

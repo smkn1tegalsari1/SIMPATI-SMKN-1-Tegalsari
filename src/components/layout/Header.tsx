@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Clock, Shield, User, UserCheck, Crown, CalendarDays, Sparkles, LogOut, Radio } from 'lucide-react';
+import { Clock, Shield, User, UserCheck, Crown, CalendarDays, Sparkles, LogOut, Radio, KeyRound } from 'lucide-react';
 import { PERIOD_TIMES } from '../../data/initialData';
 import { UserRole } from '../../types';
+import { EditAkunModal } from '../auth/EditAkunModal';
 
 interface HeaderProps {
   onOpenDemoLogin?: () => void;
@@ -24,6 +25,8 @@ export const Header: React.FC<HeaderProps> = () => {
     isServerConnected,
     logout,
   } = useApp();
+
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const roleLabels: Record<UserRole, { label: string; icon: React.FC<{ className?: string }> }> = {
     admin: { label: 'Administrator', icon: Shield },
@@ -129,12 +132,16 @@ export const Header: React.FC<HeaderProps> = () => {
           <span>{isServerConnected ? 'Server Sinkron' : 'Menghubungkan...'}</span>
         </div>
 
-        {/* Current Active User Profile Badge */}
-        <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-          <div className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-50 border border-slate-200 rounded-lg">
-            <RoleIcon className="w-3.5 h-3.5 text-cyan-600" />
+        {/* Current Active User Profile Badge & Edit Account Button */}
+        <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">
+          <button
+            onClick={() => setIsEditModalOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-800 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 border border-slate-200 rounded-lg transition cursor-pointer group text-left"
+            title="Klik untuk Edit Username & Password Akun Anda"
+          >
+            <RoleIcon className="w-3.5 h-3.5 text-cyan-600 group-hover:text-amber-600 shrink-0" />
             <div className="flex flex-col text-left">
-              <span className="font-bold text-slate-900 leading-tight truncate max-w-[150px]">
+              <span className="font-bold text-slate-900 leading-tight truncate max-w-[130px] sm:max-w-[160px]">
                 {currentUser.name}
               </span>
               <div className="flex items-center gap-1 text-[10px] text-slate-500">
@@ -146,9 +153,19 @@ export const Header: React.FC<HeaderProps> = () => {
                     Piket
                   </span>
                 )}
+                <span className="text-amber-600 font-bold ml-0.5 group-hover:underline">· Edit</span>
               </div>
             </div>
-          </div>
+          </button>
+
+          {/* Direct Key Edit Button */}
+          <button
+            onClick={() => setIsEditModalOpen(true)}
+            className="p-2 text-slate-500 hover:text-amber-600 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-lg transition cursor-pointer"
+            title="Edit Username & Password Saya"
+          >
+            <KeyRound className="w-4 h-4" />
+          </button>
 
           {/* Direct Logout Button */}
           <button
@@ -160,6 +177,12 @@ export const Header: React.FC<HeaderProps> = () => {
           </button>
         </div>
       </div>
+
+      {/* Modal Edit Akun & Password */}
+      <EditAkunModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+      />
     </header>
   );
 };

@@ -458,6 +458,14 @@ export const ManajemenAkunView: React.FC = () => {
             </div>
           </div>
 
+          {/* Info Banner: Pemulihan Kredensial Guru */}
+          <div className="p-3 bg-amber-50/90 border border-amber-200/90 rounded-2xl flex items-center gap-3 text-xs text-amber-950 shadow-2xs">
+            <Key className="w-4 h-4 text-amber-600 shrink-0" />
+            <p className="leading-relaxed">
+              <strong>Bantuan Pemulihan Akun Guru:</strong> Setiap guru dapat mengubah username & password sendiri melalui menu akun mereka. Jika guru lupa kredensialnya, Anda sebagai Administrator dapat melihat atau menyalin password mereka pada kolom <strong>PASSWORD</strong> di bawah dengan menekan tombol mata (<span className="font-semibold">👁️</span>), atau klik tombol reset password.
+            </p>
+          </div>
+
           {/* Accounts Table Card */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
             <div className="overflow-x-auto">
@@ -466,7 +474,7 @@ export const ManajemenAkunView: React.FC = () => {
                   <tr className="bg-slate-50/90 text-slate-600 font-bold uppercase text-[11px] border-b border-slate-200">
                     <th className="py-3 px-4">PENGGUNA / GURU</th>
                     <th className="py-3 px-4">USERNAME LOGIN</th>
-                    <th className="py-3 px-4">PASSWORD</th>
+                    <th className="py-3 px-4">PASSWORD (KLIK 👁️ JIKA GURU LUPA)</th>
                     <th className="py-3 px-4 text-center">ROLE</th>
                     <th className="py-3 px-4">TUGAS TAMBAHAN PIKET (HARI)</th>
                     <th className="py-3 px-4 text-center">STATUS</th>

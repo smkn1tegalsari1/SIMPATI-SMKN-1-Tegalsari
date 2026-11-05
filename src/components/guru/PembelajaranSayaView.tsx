@@ -14,11 +14,13 @@ import {
   Layers,
   Calendar,
   BookCheck,
+  KeyRound,
 } from 'lucide-react';
 import { ScheduleItem, ScheduleLessonStatus, Teacher, TeachingJournal } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 import { GuruScheduleModal } from './GuruScheduleModal';
 import { TambahJurnalModal } from '../jurnal/TambahJurnalModal';
+import { EditAkunModal } from '../auth/EditAkunModal';
 
 export const PembelajaranSayaView: React.FC = () => {
   const {
@@ -51,6 +53,7 @@ export const PembelajaranSayaView: React.FC = () => {
   const [deleteTargetSchedule, setDeleteTargetSchedule] = useState<ScheduleItem | null>(null);
   const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
   const [journalDraft, setJournalDraft] = useState<TeachingJournal | null>(null);
+  const [isEditMyAccountOpen, setIsEditMyAccountOpen] = useState(false);
 
   // Keep selected teacher in sync when currentUser changes
   useEffect(() => {
@@ -202,8 +205,18 @@ export const PembelajaranSayaView: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Section: Add Schedule Button & Teacher Selector */}
+        {/* Right Section: Add Schedule Button, Edit Account Button & Teacher Selector */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* Tombol Edit Akun Login Mandiri */}
+          <button
+            onClick={() => setIsEditMyAccountOpen(true)}
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-2xl border border-white/20 transition cursor-pointer backdrop-blur-md active:scale-95"
+            title="Edit Username & Password Akun Anda"
+          >
+            <KeyRound className="w-4 h-4 text-amber-300" />
+            <span>Edit Akun Login</span>
+          </button>
+
           {/* Tombol Input Jadwal Mandiri Guru */}
           <button
             onClick={() => {
@@ -590,6 +603,12 @@ export const PembelajaranSayaView: React.FC = () => {
           setJournalDraft(null);
         }}
         journalToEdit={journalDraft}
+      />
+
+      {/* Modal Edit Akun & Password Guru Sendiri */}
+      <EditAkunModal
+        isOpen={isEditMyAccountOpen}
+        onClose={() => setIsEditMyAccountOpen(false)}
       />
     </div>
   );

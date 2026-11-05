@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   LayoutGrid,
   Tv,
@@ -13,9 +13,11 @@ import {
   LogOut,
   GraduationCap,
   Sparkles,
+  KeyRound,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ActiveMenu, UserRole } from '../../types';
+import { EditAkunModal } from '../auth/EditAkunModal';
 
 interface SidebarProps {
   onOpenDemoLogin?: () => void;
@@ -23,6 +25,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = () => {
   const { activeMenu, setActiveMenu, currentUser, logout } = useApp();
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const allMenuItems: {
     id: ActiveMenu;
@@ -116,15 +119,32 @@ export const Sidebar: React.FC<SidebarProps> = () => {
           </div>
         </div>
 
-        <button
-          onClick={logout}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 rounded-xl transition cursor-pointer"
-          title="Keluar dari akun saat ini dan kembali ke halaman login"
-        >
-          <LogOut className="w-4 h-4 text-rose-400" />
-          <span>Keluar (Logout)</span>
-        </button>
+        <div className="space-y-1.5">
+          <button
+            onClick={() => setIsEditModalOpen(true)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-amber-300 hover:text-slate-950 bg-slate-800/80 hover:bg-amber-400 border border-slate-700/80 rounded-xl transition cursor-pointer"
+            title="Edit Username & Password Akun Login Saya"
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            <span>Edit Akun Saya</span>
+          </button>
+
+          <button
+            onClick={logout}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 rounded-xl transition cursor-pointer"
+            title="Keluar dari akun saat ini dan kembali ke halaman login"
+          >
+            <LogOut className="w-4 h-4 text-rose-400" />
+            <span>Keluar (Logout)</span>
+          </button>
+        </div>
       </div>
+
+      {/* Modal Edit Akun & Password Sendiri */}
+      <EditAkunModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+      />
     </aside>
   );
 };
