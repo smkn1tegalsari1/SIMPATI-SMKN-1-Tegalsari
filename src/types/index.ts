@@ -143,6 +143,7 @@ export interface UserAccount {
   teacherCode?: string;
   nip?: string;
   email?: string;
+  phone?: string;
   piketDays: string[]; // Tugas tambahan guru piket sesuai harinya, e.g. ['Senin', 'Kamis']
   status: 'aktif' | 'nonaktif';
   additionalDuty?: string; // Contoh: 'Guru Piket', 'Waka Kurikulum', dll

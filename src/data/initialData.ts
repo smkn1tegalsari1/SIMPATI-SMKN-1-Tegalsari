@@ -72,3 +72,121 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
     additionalDuty: 'Waka Bidang Kurikulum',
   },
 ];
+
+// Helper penjamin bahwa akun admin dan pimpinan selalu ada, sinkron, dan tidak saling bentrok
+export function ensureDefaultAccounts(accounts: any[]): UserAccount[] {
+  const currentList = Array.isArray(accounts) ? [...accounts] : [];
+
+  // 1. Pastikan akun Admin utama selalu tersedia & aktif
+  let adminAcc = currentList.find(
+    (a) => a.id === 'usr-admin' || (a.username && a.username.toLowerCase() === 'admin')
+  );
+  if (adminAcc) {
+    adminAcc = {
+      ...adminAcc,
+      id: 'usr-admin',
+      username: adminAcc.username || 'admin',
+      password: adminAcc.password || 'admin123',
+      name: adminAcc.name || 'Administrator SIMPATI',
+      role: 'admin',
+      status: 'aktif',
+      additionalDuty: adminAcc.additionalDuty || 'Super Administrator',
+      piketDays: adminAcc.piketDays || [],
+    };
+  } else {
+    adminAcc = { ...INITIAL_USER_ACCOUNTS[0] };
+  }
+
+  // 2. Pastikan akun Kepala Sekolah selalu tersedia & sinkron dengan nama resmi
+  let kepsekAcc = currentList.find(
+    (a) => a.id === 'usr-kepsek' || (a.username && a.username.toLowerCase() === 'kepsek')
+  );
+  if (kepsekAcc) {
+    kepsekAcc = {
+      ...kepsekAcc,
+      id: 'usr-kepsek',
+      username: kepsekAcc.username || 'kepsek',
+      password: kepsekAcc.password || 'pimpinan123',
+      name: 'CANDRA SURO LAKSONO, S.Pi',
+      nip: '19840925 201101 1 011',
+      role: 'pimpinan',
+      status: 'aktif',
+      additionalDuty: 'Kepala Sekolah',
+      piketDays: kepsekAcc.piketDays || [],
+    };
+  } else {
+    kepsekAcc = { ...INITIAL_USER_ACCOUNTS[1] };
+  }
+
+  // 3. Pastikan akun Waka Kurikulum selalu tersedia & sinkron dengan nama resmi
+  let wakaAcc = currentList.find(
+    (a) => a.id === 'usr-waka-kurikulum' || (a.username && a.username.toLowerCase() === 'kurikulum')
+  );
+  if (wakaAcc) {
+    wakaAcc = {
+      ...wakaAcc,
+      id: 'usr-waka-kurikulum',
+      username: wakaAcc.username || 'kurikulum',
+      password: wakaAcc.password || 'waka123',
+      name: 'EKO PRAMESTI SUMARTO, S.Mat',
+      nip: '19870618 202421 1 002',
+      role: 'pimpinan',
+      status: 'aktif',
+      additionalDuty: 'Waka Bidang Kurikulum',
+      piketDays: wakaAcc.piketDays || [],
+    };
+  } else {
+    wakaAcc = { ...INITIAL_USER_ACCOUNTS[2] };
+  }
+
+  // 4. Bersihkan duplikasi & rangkai ulang: Akun inti di urutan teratas
+  const seenIds = new Set<string>();
+  const seenUsernames = new Set<string>();
+  const result: UserAccount[] = [];
+
+  for (const core of [adminAcc, kepsekAcc, wakaAcc]) {
+    seenIds.add(core.id);
+    seenUsernames.add(core.username.toLowerCase());
+    result.push(core);
+  }
+
+  for (const acc of currentList) {
+    if (!acc) continue;
+    const accId = acc.id || '';
+    const accUser = (acc.username || '').toLowerCase();
+    if (seenIds.has(accId) || (accUser && seenUsernames.has(accUser))) {
+      continue;
+    }
+    if (accId) seenIds.add(accId);
+    if (accUser) seenUsernames.add(accUser);
+
+    result.push({
+      ...acc,
+      id: acc.id || `usr-${Date.now().toString(36)}`,
+      username: acc.username || `user_${acc.id}`,
+      password: acc.password || 'guru123',
+      name: acc.name || 'Pengguna SIMPATI',
+      role: acc.role || 'guru',
+      status: acc.status || 'aktif',
+      piketDays: acc.piketDays || [],
+    });
+  }
+
+  return result;
+}
+
+// Cek apakah akun merupakan akun sistem yang dilindungi dari penghapusan
+export function isProtectedAccount(account: any): boolean {
+  if (!account) return false;
+  const id = account.id || '';
+  const username = (account.username || '').toLowerCase();
+  const role = account.role || '';
+  return (
+    id === 'usr-admin' ||
+    id === 'usr-kepsek' ||
+    id === 'usr-waka-kurikulum' ||
+    username === 'admin' ||
+    role === 'admin'
+  );
+}
+

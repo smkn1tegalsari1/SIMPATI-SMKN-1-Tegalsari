@@ -115,7 +115,7 @@ export const EditAkunModal: React.FC<EditAkunModalProps> = ({ isOpen, onClose })
       ...matchedAccount,
       username: cleanUsername,
       password: password,
-      teacherCode: cleanUsername, // Sinkronkan juga kode guru agar konsisten
+      teacherCode: matchedAccount.teacherId ? cleanUsername : matchedAccount.teacherCode,
     };
 
     updateUserAccount(updatedAccount);

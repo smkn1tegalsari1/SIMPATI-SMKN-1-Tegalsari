@@ -29,6 +29,8 @@ import {
   INITIAL_USER_ACCOUNTS,
   INITIAL_JOURNALS,
   PERIOD_TIMES,
+  ensureDefaultAccounts,
+  isProtectedAccount,
 } from '../data/initialData';
 import { Department, AcademicYear } from '../types';
 import {
@@ -174,6 +176,9 @@ interface AppContextType {
   addJournal: (journal: TeachingJournal) => void;
   updateJournal: (journal: TeachingJournal) => void;
   deleteJournal: (id: string) => void;
+
+  // Sinkronisasi Database Terpusat
+  refreshFromServer: () => Promise<void>;
 }
 
 // Helper Tanggal, Hari & Waktu Real-Time Bahasa Indonesia sesuai Waktu Laptop
@@ -391,12 +396,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (saved !== null) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return ensureDefaultAccounts(parsed);
       } catch (e) {
-        return [];
+        return ensureDefaultAccounts(INITIAL_USER_ACCOUNTS);
       }
     }
-    return INITIAL_USER_ACCOUNTS;
+    return ensureDefaultAccounts(INITIAL_USER_ACCOUNTS);
   });
 
   const [journals, setJournals] = useState<TeachingJournal[]>(() => {
@@ -612,11 +617,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateUserAccountsAndSync = (updater: UserAccount[] | ((prev: UserAccount[]) => UserAccount[])) => {
     setUserAccounts((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
+      const reconciled = ensureDefaultAccounts(next);
       try {
-        localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(next));
+        localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled));
       } catch (e) {}
-      syncToServer('userAccounts', next);
-      return next;
+      syncToServer('userAccounts', reconciled);
+      return reconciled;
     });
   };
 
@@ -631,65 +637,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  // Fungsi sinkronisasi manual/otomatis langsung dari database server terpusat
+  const refreshFromServer = async () => {
+    try {
+      const res = await fetch('/api/state');
+      const json = await res.json();
+      if (json.success && json.data) {
+        const s = json.data;
+        if (Array.isArray(s.teachers)) {
+          setTeachers(s.teachers);
+          try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {}
+        }
+        if (Array.isArray(s.subjects)) {
+          setSubjects(s.subjects);
+          try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {}
+        }
+        if (Array.isArray(s.classes)) {
+          setClasses(s.classes);
+          try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {}
+        }
+        if (Array.isArray(s.departments)) {
+          setDepartments(s.departments);
+          try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {}
+        }
+        if (Array.isArray(s.rooms)) {
+          setRooms(s.rooms);
+          try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {}
+        }
+        if (Array.isArray(s.academicYears)) {
+          setAcademicYears(s.academicYears);
+          try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {}
+        }
+        if (Array.isArray(s.schedules)) {
+          setSchedules(s.schedules);
+          try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {}
+        }
+        if (s.attendanceRecords && typeof s.attendanceRecords === 'object') {
+          setAttendanceRecords(s.attendanceRecords);
+          try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {}
+        }
+        if (Array.isArray(s.userAccounts)) {
+          const reconciled = ensureDefaultAccounts(s.userAccounts);
+          setUserAccounts(reconciled);
+          try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
+        }
+        if (Array.isArray(s.journals)) {
+          setJournals(s.journals);
+          try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {}
+        }
+        if (s.activeWeekFilter) {
+          setActiveWeekFilterState(s.activeWeekFilter);
+          try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {}
+        }
+        setIsServerConnected(true);
+      }
+    } catch (err) {
+      console.warn('[SIMPATI] Server state awal tidak dapat diambil:', err);
+    }
+  };
+
   // Hubungkan ke Server Terpusat: Ambil state awal dan dengarkan event SSE real-time
   useEffect(() => {
     let isMounted = true;
 
-    fetch('/api/state')
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.success && json.data && isMounted) {
-          const s = json.data;
-          if (Array.isArray(s.teachers)) {
-            setTeachers(s.teachers);
-            try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {}
-          }
-          if (Array.isArray(s.subjects)) {
-            setSubjects(s.subjects);
-            try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {}
-          }
-          if (Array.isArray(s.classes)) {
-            setClasses(s.classes);
-            try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {}
-          }
-          if (Array.isArray(s.departments)) {
-            setDepartments(s.departments);
-            try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {}
-          }
-          if (Array.isArray(s.rooms)) {
-            setRooms(s.rooms);
-            try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {}
-          }
-          if (Array.isArray(s.academicYears)) {
-            setAcademicYears(s.academicYears);
-            try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {}
-          }
-          if (Array.isArray(s.schedules)) {
-            setSchedules(s.schedules);
-            try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {}
-          }
-          if (s.attendanceRecords && typeof s.attendanceRecords === 'object') {
-            setAttendanceRecords(s.attendanceRecords);
-            try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {}
-          }
-          if (Array.isArray(s.userAccounts)) {
-            setUserAccounts(s.userAccounts);
-            try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(s.userAccounts)); } catch (e) {}
-          }
-          if (Array.isArray(s.journals)) {
-            setJournals(s.journals);
-            try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {}
-          }
-          if (s.activeWeekFilter) {
-            setActiveWeekFilterState(s.activeWeekFilter);
-            try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {}
-          }
-          setIsServerConnected(true);
-        }
-      })
-      .catch((err) => {
-        console.warn('[SIMPATI] Server state awal tidak dapat diambil:', err);
-      });
+    refreshFromServer();
 
     let eventSource: EventSource | null = null;
     try {
@@ -729,8 +740,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setAttendanceRecords(data);
               try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data)); } catch (e) {}
             } else if (key === 'userAccounts' && Array.isArray(data)) {
-              setUserAccounts(data);
-              try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(data)); } catch (e) {}
+              const reconciled = ensureDefaultAccounts(data);
+              setUserAccounts(reconciled);
+              try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
             } else if (key === 'journals' && Array.isArray(data)) {
               setJournals(data);
               try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data)); } catch (e) {}
@@ -746,7 +758,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (Array.isArray(data.academicYears)) { setAcademicYears(data.academicYears); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data.academicYears)); } catch (e) {} }
               if (Array.isArray(data.schedules)) { setSchedules(data.schedules); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data.schedules)); } catch (e) {} }
               if (data.attendanceRecords && typeof data.attendanceRecords === 'object') { setAttendanceRecords(data.attendanceRecords); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data.attendanceRecords)); } catch (e) {} }
-              if (Array.isArray(data.userAccounts)) { setUserAccounts(data.userAccounts); try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(data.userAccounts)); } catch (e) {} }
+              if (Array.isArray(data.userAccounts)) {
+                const reconciled = ensureDefaultAccounts(data.userAccounts);
+                setUserAccounts(reconciled);
+                try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
+              }
               if (Array.isArray(data.journals)) { setJournals(data.journals); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data.journals)); } catch (e) {} }
             }
           }
@@ -1042,7 +1058,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteUserAccount = (id: string) => {
-    updateUserAccountsAndSync((prev) => prev.filter((a) => a.id !== id));
+    // Lindungi akun sistem utama agar tidak pernah terhapus
+    if (id === 'usr-admin' || id === 'usr-kepsek' || id === 'usr-waka-kurikulum') {
+      console.warn('[SIMPATI] Akun sistem utama tidak dapat dihapus.');
+      return;
+    }
+    updateUserAccountsAndSync((prev) =>
+      prev.filter((a) => a.id !== id && !isProtectedAccount(a))
+    );
   };
 
   const updatePiketDays = (accountId: string, days: string[]) => {
@@ -1683,7 +1706,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const clearTableData = (tableKey: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua') => {
     if (tableKey === 'guru') {
       updateTeachersAndSync([]);
-      updateUserAccountsAndSync((prev) => prev.filter((a) => a.role === 'admin'));
+      updateUserAccountsAndSync((prev) =>
+        prev.filter((a) => a.role === 'admin' || a.role === 'pimpinan' || !a.teacherId)
+      );
       updateSchedulesAndSync((prev) =>
         prev.map((s) => ({ ...s, teacherId: 't-none', teacherName: 'Belum Ditentukan', teacherCode: undefined }))
       );
@@ -1711,6 +1736,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateSchedulesAndSync([]);
       updateAttendanceRecordsAndSync({});
       updateJournalsAndSync([]);
+      updateUserAccountsAndSync((prev) =>
+        prev.filter((a) => a.role === 'admin' || a.role === 'pimpinan' || !a.teacherId)
+      );
     }
   };
   const importSchedules = (items: ScheduleItem[]) => updateSchedulesAndSync((prev) => [...prev, ...items]);
@@ -1895,6 +1923,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addJournal,
         updateJournal,
         deleteJournal,
+        refreshFromServer,
       }}
     >
       {children}

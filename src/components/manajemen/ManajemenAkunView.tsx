@@ -29,6 +29,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { UserAccount, AccountRole, DayNameIndo } from '../../types';
+import { isProtectedAccount } from '../../data/initialData';
 
 const DAYS_OF_WEEK: DayNameIndo[] = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'];
 
@@ -45,6 +46,8 @@ export const ManajemenAkunView: React.FC = () => {
     currentDayName,
     currentDateString,
     currentTimeString,
+    refreshFromServer,
+    isServerConnected,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'accounts' | 'piket_matrix'>('accounts');
@@ -53,6 +56,19 @@ export const ManajemenAkunView: React.FC = () => {
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSyncingServer, setIsSyncingServer] = useState<boolean>(false);
+
+  const handleRefreshServer = async () => {
+    setIsSyncingServer(true);
+    try {
+      await refreshFromServer();
+      showToast('Database akun berhasil disinkronkan langsung dengan server!');
+    } catch (e) {
+      showToast('Gagal menyinkronkan dengan database server.');
+    } finally {
+      setIsSyncingServer(false);
+    }
+  };
 
   // Modal States
   const [isAddEditModalOpen, setIsAddEditModalOpen] = useState(false);
@@ -180,18 +196,23 @@ export const ManajemenAkunView: React.FC = () => {
 
     if (editingAccount) {
       // Update
+      const finalRole = editingAccount.id === 'usr-admin'
+        ? 'admin'
+        : (editingAccount.id === 'usr-kepsek' || editingAccount.id === 'usr-waka-kurikulum' ? 'pimpinan' : formRole);
+      const finalStatus = editingAccount.id === 'usr-admin' ? 'aktif' : formStatus;
+
       const updated: UserAccount = {
         ...editingAccount,
         name: formName.trim(),
         username: trimmedUser,
         password: formPassword,
-        role: formRole,
+        role: finalRole as AccountRole,
         teacherId: formTeacherId || undefined,
         teacherCode: teacher ? teacher.code : editingAccount.teacherCode,
         nip: teacher ? teacher.nip : editingAccount.nip,
         email: teacher ? teacher.email : editingAccount.email,
         piketDays: formPiketDays,
-        status: formStatus,
+        status: finalStatus,
         additionalDuty:
           formAdditionalDuty.trim() ||
           (formPiketDays.length > 0 ? `Guru Piket (${formPiketDays.join(', ')})` : undefined),
@@ -306,17 +327,36 @@ export const ManajemenAkunView: React.FC = () => {
             Kelola username dan password login yang tersinkronisasi langsung dengan Data Master Guru. Peran dapat diatur sebagai <b>Admin</b>, <b>Guru</b>, atau <b>Pimpinan</b>, serta penugasan tugas tambahan sebagai <b>Guru Piket</b> sesuai hari bertugas.
           </p>
 
-          {/* Real-time Laptop Clock Display */}
-          <div className="flex items-center gap-2 mt-2.5">
+          {/* Real-time Laptop Clock & Database Status Display */}
+          <div className="flex flex-wrap items-center gap-2 mt-2.5">
             <span className="text-xs font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-xl border border-slate-200 flex items-center gap-1.5 shadow-2xs">
               <Clock className="w-3.5 h-3.5 text-amber-500" />
               <span>{currentDateString} · {currentTimeString}</span>
+            </span>
+
+            <span className={`text-xs font-bold px-3 py-1 rounded-xl border flex items-center gap-1.5 shadow-2xs ${
+              isServerConnected
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-rose-50 text-rose-700 border-rose-200'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isServerConnected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+              <span>{isServerConnected ? 'Database Server: Terhubung & Sinkron' : 'Server: Menghubungkan...'}</span>
             </span>
           </div>
         </div>
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={handleRefreshServer}
+            disabled={isSyncingServer}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-300 rounded-xl transition shadow-2xs disabled:opacity-50"
+            title="Ambil data terpusat dari database server untuk memastikan akun admin dan seluruh data telah sinkron"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-sky-600 ${isSyncingServer ? 'animate-spin' : ''}`} />
+            <span>{isSyncingServer ? 'Menyinkronkan...' : 'Sinkronkan Database Server'}</span>
+          </button>
+
           <button
             onClick={handleSyncAll}
             className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs"
@@ -681,13 +721,22 @@ export const ManajemenAkunView: React.FC = () => {
                               >
                                 <Key className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => setDeleteConfirmAccount(acc)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                                title="Hapus akun"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {isProtectedAccount(acc) ? (
+                                <span
+                                  className="p-1.5 text-slate-300 cursor-not-allowed"
+                                  title="Akun sistem utama terlindungi dan tidak dapat dihapus"
+                                >
+                                  <Lock className="w-3.5 h-3.5" />
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => setDeleteConfirmAccount(acc)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                                  title="Hapus akun"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>

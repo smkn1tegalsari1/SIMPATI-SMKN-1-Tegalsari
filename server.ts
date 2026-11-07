@@ -14,6 +14,7 @@ import {
   INITIAL_ATTENDANCE_RECORDS,
   INITIAL_USER_ACCOUNTS,
   INITIAL_JOURNALS,
+  ensureDefaultAccounts,
 } from './src/data/initialData';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,7 +40,7 @@ function getInitialStore() {
     academicYears: INITIAL_ACADEMIC_YEARS,
     schedules: INITIAL_SCHEDULE,
     attendanceRecords: INITIAL_ATTENDANCE_RECORDS,
-    userAccounts: INITIAL_USER_ACCOUNTS,
+    userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
     journals: INITIAL_JOURNALS,
     activeWeekFilter: 'ACTIVE',
     lastUpdated: Date.now(),
@@ -54,6 +55,11 @@ function loadStore() {
     if (fs.existsSync(STORE_FILE)) {
       const raw = fs.readFileSync(STORE_FILE, 'utf-8');
       inMemoryStore = JSON.parse(raw);
+      if (!inMemoryStore || typeof inMemoryStore !== 'object') {
+        inMemoryStore = getInitialStore();
+      } else {
+        inMemoryStore.userAccounts = ensureDefaultAccounts(inMemoryStore.userAccounts || INITIAL_USER_ACCOUNTS);
+      }
     } else {
       inMemoryStore = getInitialStore();
       saveStore();
@@ -134,11 +140,16 @@ async function startServer() {
         inMemoryStore = {
           ...inMemoryStore,
           ...fullState,
+          userAccounts: ensureDefaultAccounts(fullState.userAccounts || inMemoryStore.userAccounts),
           lastUpdated: Date.now(),
           lastUpdatedBy: updatedBy || 'Admin',
         };
       } else if (key && data !== undefined) {
-        inMemoryStore[key] = data;
+        if (key === 'userAccounts') {
+          inMemoryStore.userAccounts = ensureDefaultAccounts(data);
+        } else {
+          inMemoryStore[key] = data;
+        }
         inMemoryStore.lastUpdated = Date.now();
         inMemoryStore.lastUpdatedBy = updatedBy || 'Admin';
       }
@@ -148,7 +159,7 @@ async function startServer() {
       // Siarkan pembaruan langsung ke semua tab & laptop admin lain secara real-time!
       broadcastEvent('state_updated', {
         key,
-        data: key ? data : inMemoryStore,
+        data: key === 'userAccounts' ? inMemoryStore.userAccounts : (key ? data : inMemoryStore),
         updatedBy: updatedBy || 'Admin',
         originClientId: clientId,
         lastUpdated: inMemoryStore.lastUpdated,
@@ -179,7 +190,11 @@ async function startServer() {
           schedules: [],
           attendanceRecords: {},
           journals: [],
-          userAccounts: (inMemoryStore?.userAccounts || INITIAL_USER_ACCOUNTS).filter((u: any) => u.role === 'admin'),
+          userAccounts: ensureDefaultAccounts(
+            (inMemoryStore?.userAccounts || INITIAL_USER_ACCOUNTS).filter(
+              (u: any) => u.role === 'admin' || u.role === 'pimpinan'
+            )
+          ),
           activeWeekFilter: 'ACTIVE',
           lastUpdated: Date.now(),
           lastUpdatedBy: updatedBy || 'Admin',
@@ -218,7 +233,9 @@ async function startServer() {
       }
 
       const trimmedUser = String(username).trim().toLowerCase();
-      const accounts = inMemoryStore.userAccounts || [];
+      // Selalu pastikan akun default admin & pimpinan aktif dan tersedia
+      const accounts = ensureDefaultAccounts(inMemoryStore.userAccounts || []);
+      inMemoryStore.userAccounts = accounts;
 
       const matched = accounts.find((acc: any) => {
         const uMatch = acc.username && acc.username.toLowerCase() === trimmedUser;
