@@ -30,14 +30,26 @@
       "id": "usr-kepsek",
       "username": "kepsek",
       "password": "pimpinan123",
-      "name": "Kepala SMKN 1 Tegalsari",
+      "name": "CANDRA SURO LAKSONO, S.Pi",
+      "nip": "19840925 201101 1 011",
       "role": "pimpinan",
       "status": "aktif",
       "piketDays": [],
       "additionalDuty": "Kepala Sekolah"
+    },
+    {
+      "id": "usr-waka-kurikulum",
+      "username": "kurikulum",
+      "password": "waka123",
+      "name": "EKO PRAMESTI SUMARTO, S.Mat",
+      "nip": "19870618 202421 1 002",
+      "role": "pimpinan",
+      "status": "aktif",
+      "piketDays": [],
+      "additionalDuty": "Waka Bidang Kurikulum"
     }
   ],
   "activeWeekFilter": "ACTIVE",
-  "lastUpdated": 1730792000000,
-  "lastUpdatedBy": "System Reset Clean"
+  "lastUpdated": 1730920000000,
+  "lastUpdatedBy": "Admin Update Leadership"
 }

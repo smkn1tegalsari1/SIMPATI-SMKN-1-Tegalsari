@@ -872,12 +872,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else if (role === 'pimpinan') {
       const pimpinanAcc = userAccounts.find((a) => a.role === 'pimpinan') || {
         id: 'usr-kepsek',
-        name: 'SUHARTONO, S.Pd., M.T.',
+        name: 'CANDRA SURO LAKSONO, S.Pi',
         username: 'kepsek',
-        teacherId: 't-8',
+        teacherId: 't-kepsek',
         role: 'pimpinan' as const,
         piketDays: [],
         status: 'aktif' as const,
+        nip: '19840925 201101 1 011',
       };
       setCurrentUser({
         id: pimpinanAcc.id,
@@ -888,6 +889,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         username: pimpinanAcc.username,
         piketDays: [],
         isPiketToday: false,
+        nip: pimpinanAcc.nip || '19840925 201101 1 011',
       });
       setActiveMenu('dashboard_pimpinan');
     }

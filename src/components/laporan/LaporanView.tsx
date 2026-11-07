@@ -291,16 +291,16 @@ export const LaporanView: React.FC = () => {
             <p className="text-slate-600">Mengetahui,</p>
             <p className="font-bold text-slate-900 mt-0.5">Kepala SMKN 1 Tegalsari</p>
             <div className="h-16"></div>
-            <p className="font-extrabold underline text-slate-900">SUHARTONO, S.Pd., M.T.</p>
-            <p className="text-slate-500 font-mono text-[11px]">NIP. 19720101 199802 1 004</p>
+            <p className="font-extrabold underline text-slate-900">CANDRA SURO LAKSONO, S.Pi</p>
+            <p className="text-slate-500 font-mono text-[11px]">NIP. 19840925 201101 1 011</p>
           </div>
 
           <div>
             <p className="text-slate-600">Tegalsari, {currentDateOnlyString}</p>
             <p className="font-bold text-slate-900 mt-0.5">Waka Bidang Kurikulum</p>
             <div className="h-16"></div>
-            <p className="font-extrabold underline text-slate-900">SITI NURJANAH, S.Pd</p>
-            <p className="text-slate-500 font-mono text-[11px]">NIP. 19800512 200604 2 015</p>
+            <p className="font-extrabold underline text-slate-900">EKO PRAMESTI SUMARTO, S.Mat</p>
+            <p className="text-slate-500 font-mono text-[11px]">NIP. 19870618 202421 1 002</p>
           </div>
         </div>
       </div>
