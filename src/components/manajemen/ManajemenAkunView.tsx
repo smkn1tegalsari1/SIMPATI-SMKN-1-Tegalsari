@@ -48,6 +48,7 @@ export const ManajemenAkunView: React.FC = () => {
     currentTimeString,
     refreshFromServer,
     isServerConnected,
+    isCloudConnected,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'accounts' | 'piket_matrix'>('accounts');
@@ -335,12 +336,12 @@ export const ManajemenAkunView: React.FC = () => {
             </span>
 
             <span className={`text-xs font-bold px-3 py-1 rounded-xl border flex items-center gap-1.5 shadow-2xs ${
-              isServerConnected
+              isCloudConnected || isServerConnected
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 : 'bg-rose-50 text-rose-700 border-rose-200'
             }`}>
-              <span className={`w-2 h-2 rounded-full ${isServerConnected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-              <span>{isServerConnected ? 'Database Server: Terhubung & Sinkron' : 'Server: Menghubungkan...'}</span>
+              <span className={`w-2 h-2 rounded-full ${isCloudConnected || isServerConnected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+              <span>{isCloudConnected ? 'Cloud Firestore: Terpadu & Terhubung Global' : (isServerConnected ? 'Database Server: Terhubung' : 'Server: Menghubungkan...')}</span>
             </span>
           </div>
         </div>

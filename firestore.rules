@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper fungsi validasi ID string
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Dokumen state global terpusat SIMPATI
+    match /simpati_data/{docId} {
+      allow read, write: if isValidId(docId);
+    }
+
+    // Koleksi akun login pengguna
+    match /user_accounts/{accountId} {
+      allow read, write: if isValidId(accountId);
+    }
+
+    // Koleksi jurnal mengajar
+    match /teaching_journals/{journalId} {
+      allow read, write: if isValidId(journalId);
+    }
+
+    // Fallback collection untuk pengujian koneksi
+    match /test/{docId} {
+      allow read, write: if isValidId(docId);
+    }
+  }
+}

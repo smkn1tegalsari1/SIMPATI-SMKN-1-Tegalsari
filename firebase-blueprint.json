@@ -1,0 +1,118 @@
+{
+  "entities": {
+    "userAccount": {
+      "title": "UserAccount",
+      "description": "Akun login pengguna sistem SIMPATI (admin, pimpinan, guru)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "guru", "pimpinan"] },
+        "teacherId": { "type": "string" },
+        "teacherCode": { "type": "string" },
+        "nip": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "piketDays": { "type": "array" },
+        "status": { "type": "string", "enum": ["aktif", "nonaktif"] },
+        "additionalDuty": { "type": "string" },
+        "lastLogin": { "type": "string" }
+      },
+      "required": ["id", "username", "password", "name", "role", "status"]
+    },
+    "teacher": {
+      "title": "Teacher",
+      "description": "Data Master Guru SMKN 1 Tegalsari",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "nip": { "type": "string" },
+        "code": { "type": "string" },
+        "title": { "type": "string" },
+        "department": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "piketDays": { "type": "array" }
+      },
+      "required": ["id", "name"]
+    },
+    "scheduleItem": {
+      "title": "ScheduleItem",
+      "description": "Data jadwal mengajar KBM per sesi jam",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dayOfWeek": { "type": "number" },
+        "dayName": { "type": "string" },
+        "periodIndex": { "type": "number" },
+        "timeRange": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "subjectId": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "roomId": { "type": "string" },
+        "roomName": { "type": "string" },
+        "academicYearId": { "type": "string" }
+      },
+      "required": ["id", "className", "subjectName", "teacherName"]
+    },
+    "teachingJournal": {
+      "title": "TeachingJournal",
+      "description": "Catatan jurnal mengajar guru",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "subjectId": { "type": "string" },
+        "subjectName": { "type": "string" },
+        "topic": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "date", "teacherName", "className", "subjectName", "topic"]
+    },
+    "globalStore": {
+      "title": "GlobalStore",
+      "description": "Dokumen database terpusat yang menyatukan seluruh state SIMPATI di cloud",
+      "type": "object",
+      "properties": {
+        "teachers": { "type": "array" },
+        "subjects": { "type": "array" },
+        "classes": { "type": "array" },
+        "departments": { "type": "array" },
+        "rooms": { "type": "array" },
+        "academicYears": { "type": "array" },
+        "schedules": { "type": "array" },
+        "attendanceRecords": { "type": "object" },
+        "userAccounts": { "type": "array" },
+        "journals": { "type": "array" },
+        "activeWeekFilter": { "type": "string" },
+        "lastUpdated": { "type": "number" },
+        "lastUpdatedBy": { "type": "string" }
+      },
+      "required": ["userAccounts", "lastUpdated"]
+    }
+  },
+  "firestore": {
+    "/simpati_data/{docId}": {
+      "schema": "globalStore",
+      "description": "Dokumen penyimpanan cloud terpusat SIMPATI"
+    },
+    "/user_accounts/{accountId}": {
+      "schema": "userAccount",
+      "description": "Koleksi akun pengguna terpadu"
+    },
+    "/teaching_journals/{journalId}": {
+      "schema": "teachingJournal",
+      "description": "Koleksi jurnal mengajar"
+    }
+  }
+}
