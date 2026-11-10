@@ -1,19 +1,27 @@
 import { Teacher, Subject, SchoolClass, Room, ScheduleItem, AttendanceRecord, Department, AcademicYear, UserAccount, TeachingJournal } from '../types';
+import {
+  SEED_DEPARTMENTS,
+  SEED_CLASSES,
+  SEED_TEACHERS,
+  SEED_SUBJECTS,
+  SEED_ROOMS,
+  SEED_SCHEDULES,
+} from './masterSeedData';
 
-// Data Master Awal Bersih (Clean Slate)
-export const INITIAL_DEPARTMENTS: Department[] = [];
+// Data Master Awal Tersinkronisasi Penuh dengan Menu Monitoring SMKN 1 Tegalsari
+export const INITIAL_DEPARTMENTS: Department[] = SEED_DEPARTMENTS;
 
 export const INITIAL_ACADEMIC_YEARS: AcademicYear[] = [
   { id: 'ay-1', name: '2026/2027 Ganjil', startDate: '2026-07-13', endDate: '2026-12-19', status: 'aktif' },
 ];
 
-export const INITIAL_TEACHERS: Teacher[] = [];
+export const INITIAL_TEACHERS: Teacher[] = SEED_TEACHERS;
 
-export const INITIAL_SUBJECTS: Subject[] = [];
+export const INITIAL_SUBJECTS: Subject[] = SEED_SUBJECTS;
 
-export const INITIAL_CLASSES: SchoolClass[] = [];
+export const INITIAL_CLASSES: SchoolClass[] = SEED_CLASSES;
 
-export const INITIAL_ROOMS: Room[] = [];
+export const INITIAL_ROOMS: Room[] = SEED_ROOMS;
 
 export const PERIOD_TIMES = [
   { period: 1, range: '06:45–07:20', start: '06:45', end: '07:20' },
@@ -29,7 +37,7 @@ export const PERIOD_TIMES = [
   { period: 11, range: '14:15–14:50', start: '14:15', end: '14:50' },
 ];
 
-export const INITIAL_SCHEDULE: ScheduleItem[] = [];
+export const INITIAL_SCHEDULE: ScheduleItem[] = SEED_SCHEDULES;
 
 export const INITIAL_SCHEDULES = INITIAL_SCHEDULE;
 

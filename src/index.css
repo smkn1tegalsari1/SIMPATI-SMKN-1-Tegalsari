@@ -10,12 +10,24 @@
 }
 
 @media print {
-  aside, header, nav, .no-print {
+  aside, nav, .no-print {
     display: none !important;
   }
   body, main {
     background: white !important;
     padding: 0 !important;
     margin: 0 !important;
+    color: black !important;
+  }
+  @page {
+    size: landscape;
+    margin: 10mm;
+  }
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
   }
 }

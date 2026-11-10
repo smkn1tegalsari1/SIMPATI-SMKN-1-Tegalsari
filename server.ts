@@ -59,6 +59,16 @@ function loadStore() {
         inMemoryStore = getInitialStore();
       } else {
         inMemoryStore.userAccounts = ensureDefaultAccounts(inMemoryStore.userAccounts || INITIAL_USER_ACCOUNTS);
+        // Jika data kelas, jurusan, atau jadwal masih kosong, isi dengan data master terpadu SMKN 1 Tegalsari
+        if (!Array.isArray(inMemoryStore.classes) || inMemoryStore.classes.length === 0) {
+          inMemoryStore.classes = INITIAL_CLASSES;
+          inMemoryStore.departments = INITIAL_DEPARTMENTS;
+          inMemoryStore.teachers = INITIAL_TEACHERS;
+          inMemoryStore.subjects = INITIAL_SUBJECTS;
+          inMemoryStore.rooms = INITIAL_ROOMS;
+          inMemoryStore.schedules = INITIAL_SCHEDULE;
+          saveStore();
+        }
       }
     } else {
       inMemoryStore = getInitialStore();

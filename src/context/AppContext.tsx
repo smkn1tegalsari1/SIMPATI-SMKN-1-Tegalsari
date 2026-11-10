@@ -39,6 +39,14 @@ import {
   getWeekTypeShortLabel,
   isScheduleMatchingWeek,
 } from '../data/scheduleWeeks';
+import {
+  SEED_DEPARTMENTS,
+  SEED_CLASSES,
+  SEED_TEACHERS,
+  SEED_SUBJECTS,
+  SEED_ROOMS,
+  SEED_SCHEDULES,
+} from '../data/masterSeedData';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, testFirestoreConnection } from '../lib/firebase';
 
@@ -182,6 +190,7 @@ interface AppContextType {
 
   // Sinkronisasi Database Terpusat
   refreshFromServer: () => Promise<void>;
+  seedDatabaseFromPreset: () => Promise<boolean>;
 }
 
 // Helper Tanggal, Hari & Waktu Real-Time Bahasa Indonesia sesuai Waktu Laptop
@@ -726,6 +735,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Fungsi sinkronisasi eksplisit / seed data master monitoring ke Cloud Firestore terpusat
+  const seedDatabaseFromPreset = async (): Promise<boolean> => {
+    try {
+      const payload = {
+        teachers: SEED_TEACHERS,
+        subjects: SEED_SUBJECTS,
+        classes: SEED_CLASSES,
+        departments: SEED_DEPARTMENTS,
+        rooms: SEED_ROOMS,
+        academicYears: INITIAL_ACADEMIC_YEARS,
+        schedules: SEED_SCHEDULES,
+        attendanceRecords: {},
+        userAccounts: ensureDefaultAccounts(userAccounts.length > 0 ? userAccounts : INITIAL_USER_ACCOUNTS),
+        journals,
+        activeWeekFilter: 'ACTIVE',
+        lastUpdated: Date.now(),
+        lastUpdatedBy: currentUser.name || 'Admin SIMPATI',
+      };
+
+      setTeachers(SEED_TEACHERS);
+      setSubjects(SEED_SUBJECTS);
+      setClasses(SEED_CLASSES);
+      setDepartments(SEED_DEPARTMENTS);
+      setRooms(SEED_ROOMS);
+      setSchedules(SEED_SCHEDULES);
+
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(SEED_TEACHERS));
+        localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(SEED_SUBJECTS));
+        localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(SEED_CLASSES));
+        localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(SEED_DEPARTMENTS));
+        localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(SEED_ROOMS));
+        localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(SEED_SCHEDULES));
+      } catch (e) {}
+
+      syncToServer('fullState', payload);
+      await setDoc(doc(db, 'simpati_data', 'main_store'), payload);
+      setIsCloudConnected(true);
+      return true;
+    } catch (err) {
+      console.error('[SIMPATI Cloud] Gagal seed database dari preset:', err);
+      return false;
+    }
+  };
+
   // Hubungkan ke Cloud Firestore Terpusat & Server Lokal: Dengarkan pembaruan real-time di semua perangkat
   useEffect(() => {
     let isMounted = true;
@@ -737,6 +791,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (!isMounted) return;
         if (snapshot.exists()) {
           const s = snapshot.data();
+          
+          // Bila database di cloud terdeteksi belum memiliki data kelas atau jadwal (kosong dari rilis sebelumnya)
+          if (!Array.isArray(s.classes) || s.classes.length === 0 || !Array.isArray(s.schedules) || s.schedules.length === 0) {
+            console.log('[SIMPATI Cloud] Mengisi master data awal ke Cloud Firestore secara otomatis...');
+            const mergedInit = {
+              teachers: Array.isArray(s.teachers) && s.teachers.length > 0 ? s.teachers : SEED_TEACHERS,
+              subjects: Array.isArray(s.subjects) && s.subjects.length > 0 ? s.subjects : SEED_SUBJECTS,
+              classes: Array.isArray(s.classes) && s.classes.length > 0 ? s.classes : SEED_CLASSES,
+              departments: Array.isArray(s.departments) && s.departments.length > 0 ? s.departments : SEED_DEPARTMENTS,
+              rooms: Array.isArray(s.rooms) && s.rooms.length > 0 ? s.rooms : SEED_ROOMS,
+              academicYears: Array.isArray(s.academicYears) && s.academicYears.length > 0 ? s.academicYears : INITIAL_ACADEMIC_YEARS,
+              schedules: Array.isArray(s.schedules) && s.schedules.length > 0 ? s.schedules : SEED_SCHEDULES,
+              attendanceRecords: s.attendanceRecords || {},
+              userAccounts: ensureDefaultAccounts(s.userAccounts || INITIAL_USER_ACCOUNTS),
+              journals: Array.isArray(s.journals) ? s.journals : INITIAL_JOURNALS,
+              lastUpdated: Date.now(),
+              lastUpdatedBy: 'System Auto Seed',
+            };
+            setDoc(doc(db, 'simpati_data', 'main_store'), mergedInit, { merge: true }).catch(() => {});
+          }
+
           if (Array.isArray(s.teachers)) { setTeachers(s.teachers); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {} }
           if (Array.isArray(s.subjects)) { setSubjects(s.subjects); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {} }
           if (Array.isArray(s.classes)) { setClasses(s.classes); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {} }
@@ -758,13 +833,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Inisialisasi awal database cloud jika belum ada
           try {
             const initialStore = {
-              teachers: INITIAL_TEACHERS,
-              subjects: INITIAL_SUBJECTS,
-              classes: INITIAL_CLASSES,
-              departments: INITIAL_DEPARTMENTS,
-              rooms: INITIAL_ROOMS,
+              teachers: SEED_TEACHERS,
+              subjects: SEED_SUBJECTS,
+              classes: SEED_CLASSES,
+              departments: SEED_DEPARTMENTS,
+              rooms: SEED_ROOMS,
               academicYears: INITIAL_ACADEMIC_YEARS,
-              schedules: INITIAL_SCHEDULE,
+              schedules: SEED_SCHEDULES,
               attendanceRecords: {},
               userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
               journals: INITIAL_JOURNALS,
@@ -1977,6 +2052,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateJournal,
         deleteJournal,
         refreshFromServer,
+        seedDatabaseFromPreset,
       }}
     >
       {children}
