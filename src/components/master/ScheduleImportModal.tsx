@@ -750,7 +750,7 @@ export const ScheduleImportModal: React.FC<ScheduleImportModalProps> = ({
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    <span className="font-extrabold text-xs text-emerald-950">Pekan K10 Prod & K11 Norm</span>
+                    <span className="font-extrabold text-xs text-emerald-950">Pekan 10 Produktif 11 Normada</span>
                   </div>
                   <p className="text-[10px] text-slate-500 mt-0.5">
                     Kelas 10 Produktif / Lab, Kelas 11 Teori Umum
@@ -768,7 +768,7 @@ export const ScheduleImportModal: React.FC<ScheduleImportModalProps> = ({
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
-                    <span className="font-extrabold text-xs text-purple-950">Pekan K10 Norm & K11 Prod</span>
+                    <span className="font-extrabold text-xs text-purple-950">Pekan 10 Normada 11 Produktif</span>
                   </div>
                   <p className="text-[10px] text-slate-500 mt-0.5">
                     Kelas 10 Teori Umum, Kelas 11 Produktif / Bengkel

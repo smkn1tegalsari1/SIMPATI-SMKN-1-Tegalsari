@@ -58,7 +58,9 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
   const [selectedGrade, setSelectedGrade] = useState<10 | 11 | 12>(10);
   const [selectedProgram, setSelectedProgram] = useState<string>('ALL');
   const [selectedDay, setSelectedDay] = useState<number>(1); // 1 = Senin (sesuai dokumen lampiran)
-  const [selectedWeekMode, setSelectedWeekMode] = useState<'PRODUKTIF' | 'NORMATIF' | 'AUTO'>('PRODUKTIF');
+  const [selectedWeekMode, setSelectedWeekMode] = useState<
+    'P10_NORM_P11_PROD' | 'P10_PROD_P11_NORM' | 'AUTO' | 'PRODUKTIF' | 'NORMATIF'
+  >('P10_NORM_P11_PROD');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
@@ -90,11 +92,15 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
 
   // Week label helper
   const currentWeekLabel = useMemo(() => {
-    if (selectedWeekMode === 'PRODUKTIF') return 'Pekan Produktif';
-    if (selectedWeekMode === 'NORMATIF') return 'Pekan Normatif';
+    if (selectedWeekMode === 'P10_NORM_P11_PROD' || selectedWeekMode === 'PRODUKTIF') {
+      return 'Pekan 10 Normada 11 Produktif';
+    }
+    if (selectedWeekMode === 'P10_PROD_P11_NORM' || selectedWeekMode === 'NORMATIF') {
+      return 'Pekan 10 Produktif 11 Normada';
+    }
     return effectiveWeekType === 'P10_PROD_P11_NORM'
-      ? 'Pekan K10 Produktif · K11 Normatif'
-      : 'Pekan K10 Normatif · K11 Produktif';
+      ? 'Pekan 10 Produktif 11 Normada'
+      : 'Pekan 10 Normada 11 Produktif';
   }, [selectedWeekMode, effectiveWeekType]);
 
   // Handler sinkronisasi database paksa
@@ -118,17 +124,13 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
   // Helper cek kecocokan pekan rotasi
   const isWeekMatching = (sWeek?: string): boolean => {
     if (!sWeek || sWeek === 'ALL') return true;
-    if (selectedWeekMode === 'AUTO') {
-      return sWeek === effectiveWeekType;
-    }
-    if (selectedGrade === 10) {
-      if (selectedWeekMode === 'PRODUKTIF') return sWeek === 'P10_PROD_P11_NORM';
-      if (selectedWeekMode === 'NORMATIF') return sWeek === 'P10_NORM_P11_PROD';
-    } else if (selectedGrade === 11) {
-      if (selectedWeekMode === 'PRODUKTIF') return sWeek === 'P10_NORM_P11_PROD';
-      if (selectedWeekMode === 'NORMATIF') return sWeek === 'P10_PROD_P11_NORM';
-    }
-    return true;
+    const targetWeek =
+      selectedWeekMode === 'AUTO'
+        ? effectiveWeekType
+        : selectedWeekMode === 'P10_NORM_P11_PROD' || selectedWeekMode === 'PRODUKTIF'
+        ? 'P10_NORM_P11_PROD'
+        : 'P10_PROD_P11_NORM';
+    return sWeek === targetWeek;
   };
 
   // Generate matrix data REAL-TIME dari Firestore DB masterClasses dan schedules
@@ -378,13 +380,21 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
           <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
             <span className="hidden sm:inline">Rotasi:</span>
             <select
-              value={selectedWeekMode}
+              value={
+                selectedWeekMode === 'PRODUKTIF'
+                  ? 'P10_NORM_P11_PROD'
+                  : selectedWeekMode === 'NORMATIF'
+                  ? 'P10_PROD_P11_NORM'
+                  : selectedWeekMode
+              }
               onChange={(e) => setSelectedWeekMode(e.target.value as any)}
-              className="text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-amber-500"
+              className="text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 rounded-lg px-2.5 py-1 focus:ring-2 focus:ring-amber-500 cursor-pointer"
             >
-              <option value="PRODUKTIF">Pekan Produktif</option>
-              <option value="NORMATIF">Pekan Normatif</option>
-              <option value="AUTO">Ikuti Kalender Hari Ini</option>
+              <option value="P10_NORM_P11_PROD">Pekan 10 Normada 11 Produktif</option>
+              <option value="P10_PROD_P11_NORM">Pekan 10 Produktif 11 Normada</option>
+              <option value="AUTO">
+                ⚡ Ikuti Kalender ({effectiveWeekType === 'P10_PROD_P11_NORM' ? '10 Prod · 11 Normada' : '10 Normada · 11 Prod'})
+              </option>
             </select>
           </div>
 
@@ -1054,9 +1064,14 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
                             department: activeSlotModal.row.programCode,
                             roomName: assignRoomName || 'Ruang Kelas',
                             roomType: 'Teori',
-                            weekType: selectedWeekMode === 'PRODUKTIF'
-                              ? (selectedGrade === 10 ? 'P10_PROD_P11_NORM' : 'P10_NORM_P11_PROD')
-                              : (selectedGrade === 10 ? 'P10_NORM_P11_PROD' : 'P10_PROD_P11_NORM'),
+                            weekType:
+                              selectedGrade === 12
+                                ? 'ALL'
+                                : selectedWeekMode === 'P10_NORM_P11_PROD' || selectedWeekMode === 'PRODUKTIF'
+                                ? 'P10_NORM_P11_PROD'
+                                : selectedWeekMode === 'P10_PROD_P11_NORM' || selectedWeekMode === 'NORMATIF'
+                                ? 'P10_PROD_P11_NORM'
+                                : effectiveWeekType,
                           };
 
                           addSchedule(newSchedule);

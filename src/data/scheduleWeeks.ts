@@ -19,8 +19,8 @@ export const WEEK_ROTATION_DEFINITIONS: Record<ScheduleWeekType, WeekRotationInf
   P10_PROD_P11_NORM: {
     id: 'P10_PROD_P11_NORM',
     code: 'Pekan A',
-    name: 'Pekan Kelas 10 Produktif dan Kelas 11 Normatif Adaptif',
-    shortName: 'K10 Produktif · K11 NormAdaptif',
+    name: 'Pekan 10 Produktif 11 Normada',
+    shortName: '10 Prod · 11 Normada',
     k10Role: 'Produktif / Kejuruan (Bengkel & Lab)',
     k11Role: 'Normatif & Adaptif (Teori / Umum)',
     description: 'Rotasi mingguan di mana Kelas 10 belajar praktik kejuruan (Produktif) dan Kelas 11 belajar mata pelajaran umum (Normatif Adaptif).',
@@ -33,8 +33,8 @@ export const WEEK_ROTATION_DEFINITIONS: Record<ScheduleWeekType, WeekRotationInf
   P10_NORM_P11_PROD: {
     id: 'P10_NORM_P11_PROD',
     code: 'Pekan B',
-    name: 'Pekan Kelas 10 Normatif Adaptif dan Kelas 11 Produktif',
-    shortName: 'K10 NormAdaptif · K11 Produktif',
+    name: 'Pekan 10 Normada 11 Produktif',
+    shortName: '10 Normada · 11 Prod',
     k10Role: 'Normatif & Adaptif (Teori / Umum)',
     k11Role: 'Produktif / Kejuruan (Bengkel & Lab)',
     description: 'Rotasi mingguan di mana Kelas 10 belajar mata pelajaran umum (Normatif Adaptif) dan Kelas 11 belajar praktik kejuruan (Produktif).',
@@ -81,10 +81,10 @@ export const getWeekRotationFromDate = (d: Date = new Date()): 'P10_PROD_P11_NOR
  */
 export const getWeekTypeLabel = (weekType?: ScheduleWeekType | string): string => {
   if (weekType === 'P10_PROD_P11_NORM') {
-    return 'Pekan Kelas 10 Produktif dan Kelas 11 Normatif Adaptif';
+    return 'Pekan 10 Produktif 11 Normada';
   }
   if (weekType === 'P10_NORM_P11_PROD') {
-    return 'Pekan Kelas 10 Normatif Adaptif dan Kelas 11 Produktif';
+    return 'Pekan 10 Normada 11 Produktif';
   }
   if (weekType === 'ALL') {
     return 'Berlaku Kedua Pekan (Rutin Tiap Minggu)';
@@ -97,10 +97,10 @@ export const getWeekTypeLabel = (weekType?: ScheduleWeekType | string): string =
  */
 export const getWeekTypeShortLabel = (weekType?: ScheduleWeekType | string): string => {
   if (weekType === 'P10_PROD_P11_NORM') {
-    return 'K10 Produktif · K11 NormAdaptif';
+    return '10 Prod · 11 Normada';
   }
   if (weekType === 'P10_NORM_P11_PROD') {
-    return 'K10 NormAdaptif · K11 Produktif';
+    return '10 Normada · 11 Prod';
   }
   if (weekType === 'ALL') {
     return 'Semua Pekan';

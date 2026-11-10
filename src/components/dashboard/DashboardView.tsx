@@ -244,9 +244,9 @@ export const DashboardView: React.FC = () => {
               <span className={`w-2 h-2 rounded-full ${effectiveWeekType === 'P10_PROD_P11_NORM' ? 'bg-emerald-400' : 'bg-purple-400'} animate-pulse`} />
               <span>
                 {effectiveWeekType === 'P10_PROD_P11_NORM'
-                  ? 'Pekan K10 Prod & K11 Norm'
+                  ? 'Pekan 10 Produktif 11 Normada'
                   : effectiveWeekType === 'P10_NORM_P11_PROD'
-                  ? 'Pekan K10 Norm & K11 Prod'
+                  ? 'Pekan 10 Normada 11 Produktif'
                   : 'Semua Pekan'}
               </span>
             </div>
@@ -484,8 +484,8 @@ export const DashboardView: React.FC = () => {
                 className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
               >
                 <option value="ACTIVE">Pekan Aktif</option>
-                <option value="P10_PROD_P11_NORM">K10 Prod · K11 Norm</option>
-                <option value="P10_NORM_P11_PROD">K10 Norm · K11 Prod</option>
+                <option value="P10_PROD_P11_NORM">Pekan 10 Produktif 11 Normada</option>
+                <option value="P10_NORM_P11_PROD">Pekan 10 Normada 11 Produktif</option>
                 <option value="ALL">Semua Pekan</option>
               </select>
             </div>

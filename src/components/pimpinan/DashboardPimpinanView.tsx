@@ -245,7 +245,7 @@ export const DashboardPimpinanView: React.FC = () => {
           }`}
         >
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span>Pekan Aktif Real-Time ({effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})</span>
+          <span>Pekan Aktif Real-Time ({effectiveWeekType === 'P10_PROD_P11_NORM' ? '10 Prod · 11 Normada' : '10 Normada · 11 Prod'})</span>
         </button>
 
         <button
@@ -257,7 +257,7 @@ export const DashboardPimpinanView: React.FC = () => {
           }`}
         >
           <span className="w-2 h-2 rounded-full bg-emerald-500" />
-          <span>Pekan K10 Produktif & K11 Normatif Adaptif</span>
+          <span>Pekan 10 Produktif 11 Normada</span>
         </button>
 
         <button
@@ -269,7 +269,7 @@ export const DashboardPimpinanView: React.FC = () => {
           }`}
         >
           <span className="w-2 h-2 rounded-full bg-purple-500" />
-          <span>Pekan K10 Normatif Adaptif & K11 Produktif</span>
+          <span>Pekan 10 Normada 11 Produktif</span>
         </button>
 
         <button

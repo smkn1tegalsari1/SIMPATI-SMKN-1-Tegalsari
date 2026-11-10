@@ -744,10 +744,10 @@ export const BulkEditMasterModal: React.FC<BulkEditMasterModalProps> = ({
                       className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-semibold"
                     >
                       <option value="P10_PROD_P11_NORM">
-                        Pekan Kelas 10 Produktif & Kelas 11 Normatif Adaptif
+                        Pekan 10 Produktif 11 Normada
                       </option>
                       <option value="P10_NORM_P11_PROD">
-                        Pekan Kelas 10 Normatif Adaptif & Kelas 11 Produktif
+                        Pekan 10 Normada 11 Produktif
                       </option>
                       <option value="ALL">
                         Berlaku Kedua Pekan (Rutin Tiap Minggu)

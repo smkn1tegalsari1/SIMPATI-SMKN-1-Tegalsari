@@ -196,30 +196,25 @@ export const ManajemenAkunView: React.FC = () => {
     const teacher = formTeacherId ? teachers.find((t) => t.id === formTeacherId) : undefined;
 
     if (editingAccount) {
-      // Update
-      const finalRole = editingAccount.id === 'usr-admin'
-        ? 'admin'
-        : (editingAccount.id === 'usr-kepsek' || editingAccount.id === 'usr-waka-kurikulum' ? 'pimpinan' : formRole);
-      const finalStatus = editingAccount.id === 'usr-admin' ? 'aktif' : formStatus;
-
+      // Update akun pengguna (termasuk admin, kepsek, kurikulum, dan guru)
       const updated: UserAccount = {
         ...editingAccount,
         name: formName.trim(),
         username: trimmedUser,
         password: formPassword,
-        role: finalRole as AccountRole,
+        role: formRole as AccountRole,
         teacherId: formTeacherId || undefined,
         teacherCode: teacher ? teacher.code : editingAccount.teacherCode,
-        nip: teacher ? teacher.nip : editingAccount.nip,
+        nip: teacher ? teacher.nip : (editingAccount.nip || undefined),
         email: teacher ? teacher.email : editingAccount.email,
         piketDays: formPiketDays,
-        status: finalStatus,
+        status: formStatus,
         additionalDuty:
           formAdditionalDuty.trim() ||
           (formPiketDays.length > 0 ? `Guru Piket (${formPiketDays.join(', ')})` : undefined),
       };
       updateUserAccount(updated);
-      showToast(`Akun "${updated.username}" (${updated.name}) berhasil diperbarui!`);
+      showToast(`Akun "${updated.username}" (${updated.name}) berhasil disimpan dan disinkronkan ke database!`);
     } else {
       // Create new
       const newAcc: UserAccount = {

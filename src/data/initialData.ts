@@ -81,66 +81,66 @@ export const INITIAL_USER_ACCOUNTS: UserAccount[] = [
   },
 ];
 
-// Helper penjamin bahwa akun admin dan pimpinan selalu ada, sinkron, dan tidak saling bentrok
+// Helper penjamin bahwa akun admin dan pimpinan selalu ada, sinkron, dan mempertahankan seluruh perubahan pengguna
 export function ensureDefaultAccounts(accounts: any[]): UserAccount[] {
   const currentList = Array.isArray(accounts) ? [...accounts] : [];
 
-  // 1. Pastikan akun Admin utama selalu tersedia & aktif
+  // 1. Pastikan akun Admin utama selalu tersedia & pertahankan data yang telah diedit pengguna
   let adminAcc = currentList.find(
     (a) => a.id === 'usr-admin' || (a.username && a.username.toLowerCase() === 'admin')
   );
   if (adminAcc) {
     adminAcc = {
       ...adminAcc,
-      id: 'usr-admin',
+      id: adminAcc.id || 'usr-admin',
       username: adminAcc.username || 'admin',
       password: adminAcc.password || 'admin123',
       name: adminAcc.name || 'Administrator SIMPATI',
-      role: 'admin',
-      status: 'aktif',
-      additionalDuty: adminAcc.additionalDuty || 'Super Administrator',
+      role: adminAcc.role || 'admin',
+      status: adminAcc.status || 'aktif',
+      additionalDuty: adminAcc.additionalDuty !== undefined ? adminAcc.additionalDuty : 'Super Administrator',
       piketDays: adminAcc.piketDays || [],
     };
   } else {
     adminAcc = { ...INITIAL_USER_ACCOUNTS[0] };
   }
 
-  // 2. Pastikan akun Kepala Sekolah selalu tersedia & sinkron dengan nama resmi
+  // 2. Pastikan akun Kepala Sekolah selalu tersedia & pertahankan data yang telah diedit pengguna
   let kepsekAcc = currentList.find(
     (a) => a.id === 'usr-kepsek' || (a.username && a.username.toLowerCase() === 'kepsek')
   );
   if (kepsekAcc) {
     kepsekAcc = {
       ...kepsekAcc,
-      id: 'usr-kepsek',
+      id: kepsekAcc.id || 'usr-kepsek',
       username: kepsekAcc.username || 'kepsek',
       password: kepsekAcc.password || 'pimpinan123',
-      name: 'CANDRA SURO LAKSONO, S.Pi',
-      nip: '19840925 201101 1 011',
-      role: 'pimpinan',
-      status: 'aktif',
-      additionalDuty: 'Kepala Sekolah',
+      name: kepsekAcc.name || 'CANDRA SURO LAKSONO, S.Pi',
+      nip: kepsekAcc.nip !== undefined ? kepsekAcc.nip : '19840925 201101 1 011',
+      role: kepsekAcc.role || 'pimpinan',
+      status: kepsekAcc.status || 'aktif',
+      additionalDuty: kepsekAcc.additionalDuty !== undefined ? kepsekAcc.additionalDuty : 'Kepala Sekolah',
       piketDays: kepsekAcc.piketDays || [],
     };
   } else {
     kepsekAcc = { ...INITIAL_USER_ACCOUNTS[1] };
   }
 
-  // 3. Pastikan akun Waka Kurikulum selalu tersedia & sinkron dengan nama resmi
+  // 3. Pastikan akun Waka Kurikulum selalu tersedia & pertahankan data yang telah diedit pengguna
   let wakaAcc = currentList.find(
     (a) => a.id === 'usr-waka-kurikulum' || (a.username && a.username.toLowerCase() === 'kurikulum')
   );
   if (wakaAcc) {
     wakaAcc = {
       ...wakaAcc,
-      id: 'usr-waka-kurikulum',
+      id: wakaAcc.id || 'usr-waka-kurikulum',
       username: wakaAcc.username || 'kurikulum',
       password: wakaAcc.password || 'waka123',
-      name: 'EKO PRAMESTI SUMARTO, S.Mat',
-      nip: '19870618 202421 1 002',
-      role: 'pimpinan',
-      status: 'aktif',
-      additionalDuty: 'Waka Bidang Kurikulum',
+      name: wakaAcc.name || 'EKO PRAMESTI SUMARTO, S.Mat',
+      nip: wakaAcc.nip !== undefined ? wakaAcc.nip : '19870618 202421 1 002',
+      role: wakaAcc.role || 'pimpinan',
+      status: wakaAcc.status || 'aktif',
+      additionalDuty: wakaAcc.additionalDuty !== undefined ? wakaAcc.additionalDuty : 'Waka Bidang Kurikulum',
       piketDays: wakaAcc.piketDays || [],
     };
   } else {

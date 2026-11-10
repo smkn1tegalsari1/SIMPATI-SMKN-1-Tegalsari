@@ -1883,7 +1883,7 @@ export const DataMasterView: React.FC = () => {
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span>Pekan K10 Produktif & K11 Normatif Adaptif</span>
+                <span>Pekan 10 Produktif 11 Normada</span>
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/30">{countP1}</span>
               </button>
 
@@ -1896,7 +1896,7 @@ export const DataMasterView: React.FC = () => {
                 }`}
               >
                 <span className="w-2 h-2 rounded-full bg-indigo-400" />
-                <span>Pekan K10 Normatif Adaptif & K11 Produktif</span>
+                <span>Pekan 10 Normada 11 Produktif</span>
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/30">{countP2}</span>
               </button>
 
@@ -1958,8 +1958,8 @@ export const DataMasterView: React.FC = () => {
                   className="w-full py-1.5 px-2.5 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 text-xs font-semibold text-slate-800"
                 >
                   <option value="SEMUA">Semua Rotasi Pekan</option>
-                  <option value="P10_PROD_P11_NORM">Pekan K10 Prod & K11 Norm</option>
-                  <option value="P10_NORM_P11_PROD">Pekan K10 Norm & K11 Prod</option>
+                  <option value="P10_PROD_P11_NORM">Pekan 10 Produktif 11 Normada</option>
+                  <option value="P10_NORM_P11_PROD">Pekan 10 Normada 11 Produktif</option>
                   <option value="ALL">Berlaku Kedua Pekan</option>
                 </select>
               </div>

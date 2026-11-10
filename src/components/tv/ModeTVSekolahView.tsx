@@ -577,13 +577,13 @@ export const ModeTVSekolahView: React.FC = () => {
                 className="bg-transparent font-bold text-white outline-none cursor-pointer max-w-[190px] truncate"
               >
                 <option value="ACTIVE" className="bg-[#0D2235] text-amber-300">
-                  ⚡ Pekan Aktif ({effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})
+                  ⚡ Pekan Aktif ({effectiveWeekType === 'P10_PROD_P11_NORM' ? '10 Prod · 11 Normada' : '10 Normada · 11 Prod'})
                 </option>
                 <option value="P10_PROD_P11_NORM" className="bg-[#0D2235] text-emerald-400">
-                  🟢 Pekan K10 Prod & K11 Norm
+                  🟢 Pekan 10 Produktif 11 Normada
                 </option>
                 <option value="P10_NORM_P11_PROD" className="bg-[#0D2235] text-purple-400">
-                  🟣 Pekan K10 Norm & K11 Prod
+                  🟣 Pekan 10 Normada 11 Produktif
                 </option>
                 <option value="ALL" className="bg-[#0D2235] text-white">
                   🌐 Semua Pekan
