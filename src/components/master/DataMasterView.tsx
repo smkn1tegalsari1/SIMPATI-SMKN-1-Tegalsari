@@ -3677,20 +3677,41 @@ export const DataMasterView: React.FC = () => {
                 </select>
               </div>
 
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  onClick={() => setEditingSchedule(null)}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                  onClick={() => {
+                    const toDelete = editingSchedule;
+                    setEditingSchedule(null);
+                    setDeleteTarget({
+                      type: 'jadwal',
+                      id: toDelete.id,
+                      title: `${toDelete.subjectName} - ${toDelete.className}`,
+                      subtitle: `Hari ${toDelete.dayName || 'HARI'} • Jam Ke-${toDelete.periodIndex} (${toDelete.startTime} - ${toDelete.endTime}) • Guru: ${toDelete.teacherName}`,
+                      badge: toDelete.roomName,
+                      warningNote: 'Slot jadwal pelajaran ini akan dihapus permanen dari jadwal kelas dan agenda mengajar guru.'
+                    });
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
                 >
-                  Batal
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus Jadwal Ini</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg"
-                >
-                  Perbarui Jadwal
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingSchedule(null)}
+                    className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg cursor-pointer"
+                  >
+                    Perbarui Jadwal
+                  </button>
+                </div>
               </div>
             </form>
           </div>

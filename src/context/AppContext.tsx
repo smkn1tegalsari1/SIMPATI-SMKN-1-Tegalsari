@@ -634,8 +634,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(next));
       } catch (e) {}
-      syncToServer('schedules', next);
-      syncToCloud({ schedules: next });
+      setTimeout(() => {
+        syncToServer('schedules', next);
+        syncToCloud({ schedules: next });
+      }, 0);
       return next;
     });
   };
@@ -646,8 +648,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(next));
       } catch (e) {}
-      syncToServer('attendanceRecords', next);
-      syncToCloud({ attendanceRecords: next });
+      setTimeout(() => {
+        syncToServer('attendanceRecords', next);
+        syncToCloud({ attendanceRecords: next });
+      }, 0);
       return next;
     });
   };
@@ -792,22 +796,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (snapshot.exists()) {
           const s = snapshot.data();
           
-          // Bila database di cloud terdeteksi belum memiliki data kelas atau jadwal (kosong dari rilis sebelumnya)
-          if (!Array.isArray(s.classes) || s.classes.length === 0 || !Array.isArray(s.schedules) || s.schedules.length === 0) {
-            console.log('[SIMPATI Cloud] Mengisi master data awal ke Cloud Firestore secara otomatis...');
+          // Inisialisasi awal ke Cloud Firestore hanya bila dokumen benar-benar belum diinisialisasi sama sekali
+          const isStoreBrandNew = !s.lastUpdated && !Array.isArray(s.classes) && !Array.isArray(s.teachers);
+          if (isStoreBrandNew) {
+            console.log('[SIMPATI Cloud] Inisialisasi master data awal ke Cloud Firestore...');
             const mergedInit = {
-              teachers: Array.isArray(s.teachers) && s.teachers.length > 0 ? s.teachers : SEED_TEACHERS,
-              subjects: Array.isArray(s.subjects) && s.subjects.length > 0 ? s.subjects : SEED_SUBJECTS,
-              classes: Array.isArray(s.classes) && s.classes.length > 0 ? s.classes : SEED_CLASSES,
-              departments: Array.isArray(s.departments) && s.departments.length > 0 ? s.departments : SEED_DEPARTMENTS,
-              rooms: Array.isArray(s.rooms) && s.rooms.length > 0 ? s.rooms : SEED_ROOMS,
-              academicYears: Array.isArray(s.academicYears) && s.academicYears.length > 0 ? s.academicYears : INITIAL_ACADEMIC_YEARS,
-              schedules: Array.isArray(s.schedules) && s.schedules.length > 0 ? s.schedules : SEED_SCHEDULES,
-              attendanceRecords: s.attendanceRecords || {},
-              userAccounts: ensureDefaultAccounts(s.userAccounts || INITIAL_USER_ACCOUNTS),
-              journals: Array.isArray(s.journals) ? s.journals : INITIAL_JOURNALS,
+              teachers: SEED_TEACHERS,
+              subjects: SEED_SUBJECTS,
+              classes: SEED_CLASSES,
+              departments: SEED_DEPARTMENTS,
+              rooms: SEED_ROOMS,
+              academicYears: INITIAL_ACADEMIC_YEARS,
+              schedules: SEED_SCHEDULES,
+              attendanceRecords: {},
+              userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
+              journals: INITIAL_JOURNALS,
               lastUpdated: Date.now(),
-              lastUpdatedBy: 'System Auto Seed',
+              lastUpdatedBy: 'System Cloud Seed',
             };
             setDoc(doc(db, 'simpati_data', 'main_store'), mergedInit, { merge: true }).catch(() => {});
           }

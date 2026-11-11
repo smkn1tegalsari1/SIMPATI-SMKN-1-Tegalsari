@@ -203,10 +203,8 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
             roomName: dbItem.roomName || 'Kelas',
             roomType: dbItem.roomType || 'Teori',
           };
-        } else if (fallbackPreset && fallbackPreset.slots[p.index]) {
-          // Gunakan preset jika schedules belum terisi untuk jam ini
-          slots[p.index] = fallbackPreset.slots[p.index];
         } else {
+          // Bila tidak ada di database jadwal, slot harus bernilai null (kosong)
           slots[p.index] = null;
         }
       });
@@ -926,16 +924,49 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          const existingSched = schedules.find((s) => {
-                            const matchClass = s.classId === activeSlotModal.row.id || s.className?.toUpperCase() === activeSlotModal.row.className.toUpperCase();
-                            const num = typeof s.periodIndex === 'number' ? s.periodIndex : parseInt(String(s.periodIndex), 10);
-                            return matchClass && num === activeSlotModal.periodIndex && s.dayOfWeek === selectedDay;
+                          const matchingSchedules = schedules.filter((s) => {
+                            const matchClass =
+                              s.classId === activeSlotModal.row.id ||
+                              s.className?.trim().toUpperCase() === activeSlotModal.row.className.trim().toUpperCase();
+                            const num =
+                              typeof s.periodIndex === 'number'
+                                ? s.periodIndex
+                                : parseInt(String(s.periodIndex), 10);
+                            const sDay =
+                              s.dayOfWeek ||
+                              (s.dayName
+                                ? { SENIN: 1, SELASA: 2, RABU: 3, KAMIS: 4, JUMAT: 5 }[s.dayName.toUpperCase()]
+                                : 1);
+                            return (
+                              matchClass &&
+                              num === activeSlotModal.periodIndex &&
+                              sDay === selectedDay &&
+                              isWeekMatching(s.weekType)
+                            );
                           });
-                          if (existingSched) {
-                            deleteSchedule(existingSched.id);
+
+                          if (matchingSchedules.length > 0) {
+                            matchingSchedules.forEach((sch) => {
+                              deleteSchedule(sch.id);
+                            });
                             setSyncToast(`Jadwal jam ke-${activeSlotModal.periodIndex} untuk ${activeSlotModal.row.className} berhasil dikosongkan.`);
                           } else {
-                            setSyncToast(`Slot berhasil dikosongkan pada database.`);
+                            const fallbackSched = schedules.find((s) => {
+                              const matchClass =
+                                s.classId === activeSlotModal.row.id ||
+                                s.className?.trim().toUpperCase() === activeSlotModal.row.className.trim().toUpperCase();
+                              const num =
+                                typeof s.periodIndex === 'number'
+                                  ? s.periodIndex
+                                  : parseInt(String(s.periodIndex), 10);
+                              return matchClass && num === activeSlotModal.periodIndex;
+                            });
+                            if (fallbackSched) {
+                              deleteSchedule(fallbackSched.id);
+                              setSyncToast(`Jadwal jam ke-${activeSlotModal.periodIndex} untuk ${activeSlotModal.row.className} berhasil dikosongkan.`);
+                            } else {
+                              setSyncToast(`Slot berhasil dikosongkan pada database.`);
+                            }
                           }
                           setActiveSlotModal(null);
                         }}
