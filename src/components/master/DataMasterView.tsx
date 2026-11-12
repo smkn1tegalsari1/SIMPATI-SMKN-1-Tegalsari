@@ -102,6 +102,7 @@ export const DataMasterView: React.FC = () => {
   } = useApp();
 
   // Delete Confirmation & In-App Dialog State
+  // Delete Confirmation & In-App Dialog State
   const [deleteTarget, setDeleteTarget] = useState<{
     type: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua_jadwal' | 'kosongkan_tab' | 'reset_database';
     id?: string;
@@ -110,9 +111,34 @@ export const DataMasterView: React.FC = () => {
     badge?: string;
     warningNote?: string;
     tabKey?: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua';
+    itemCount?: number;
+    itemUnit?: string;
   } | null>(null);
+  const [confirmSafetyCheck, setConfirmSafetyCheck] = useState<boolean>(false);
   const [deleteAlertModal, setDeleteAlertModal] = useState<string | null>(null);
   const [toastNotification, setToastNotification] = useState<string | null>(null);
+
+  // Helper statistik ringkas tab yang sedang aktif untuk modal peringatan
+  const getCurrentTabStats = () => {
+    switch (activeTab) {
+      case 'guru':
+        return { name: 'Data Guru', count: teachers.length, unit: 'guru pengajar' };
+      case 'mapel':
+        return { name: 'Data Mata Pelajaran', count: subjects.length, unit: 'mata pelajaran' };
+      case 'jurusan':
+        return { name: 'Data Jurusan / Program Keahlian', count: departments.length, unit: 'program keahlian' };
+      case 'kelas':
+        return { name: 'Data Kelas & Rombel', count: classes.length, unit: 'kelas & rombel' };
+      case 'ruang':
+        return { name: 'Data Ruang & Bengkel', count: rooms.length, unit: 'ruangan' };
+      case 'tahun_pelajaran':
+        return { name: 'Data Tahun Pelajaran', count: academicYears.filter((ay) => ay.status !== 'aktif').length, unit: 'tahun pelajaran non-aktif' };
+      case 'jadwal':
+        return { name: 'Jadwal Pelajaran', count: schedules.length, unit: 'slot jadwal' };
+      default:
+        return { name: 'Data Master', count: 0, unit: 'data' };
+    }
+  };
 
   useEffect(() => {
     if (toastNotification) {
@@ -179,12 +205,13 @@ export const DataMasterView: React.FC = () => {
           }
           break;
         case 'reset_database':
-          resetAllData();
-          setToastNotification('Seluruh database demo berhasil dibersihkan. Sistem siap digunakan dari awal!');
+          clearTableData('semua');
+          setToastNotification('Seluruh database berhasil dikosongkan. Sistem kini bersih dari awal (Clean Slate)!');
           break;
       }
     } finally {
       setDeleteTarget(null);
+      setConfirmSafetyCheck(false);
     }
   };
 
@@ -965,22 +992,17 @@ export const DataMasterView: React.FC = () => {
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => {
-              const currentTabLabels: Record<string, string> = {
-                guru: 'Data Guru',
-                mapel: 'Data Mata Pelajaran',
-                jurusan: 'Data Jurusan',
-                kelas: 'Data Kelas & Rombel',
-                ruang: 'Data Ruang & Bengkel',
-                tahun_pelajaran: 'Data Tahun Pelajaran',
-                jadwal: 'Jadwal Pelajaran',
-              };
+              const stats = getCurrentTabStats();
+              setConfirmSafetyCheck(false);
               setDeleteTarget({
                 type: 'kosongkan_tab',
                 tabKey: activeTab,
-                title: currentTabLabels[activeTab] || 'Data Master',
-                subtitle: `Tindakan ini akan mengosongkan seluruh isi ${currentTabLabels[activeTab]} secara permanen dari server database dan memori perangkat.`,
-                badge: currentTabLabels[activeTab],
-                warningNote: 'Data yang telah dikosongkan tidak akan muncul lagi setelah direfresh. Anda dapat mengimpor data baru kapan pun.'
+                title: stats.name,
+                subtitle: `Tindakan ini akan mengosongkan seluruh isi ${stats.name} (${stats.count} ${stats.unit}) secara permanen dari Cloud Firestore dan server sistem.`,
+                badge: stats.name,
+                itemCount: stats.count,
+                itemUnit: stats.unit,
+                warningNote: 'PERHATIAN: Data yang telah dikosongkan tidak akan muncul lagi setelah direfresh. Anda dapat mengimpor data baru kapan pun dari file spreadsheet/Excel.'
               });
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-rose-700 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
@@ -992,12 +1014,16 @@ export const DataMasterView: React.FC = () => {
 
           <button
             onClick={() => {
+              const totalItems = teachers.length + subjects.length + departments.length + classes.length + rooms.length + schedules.length;
+              setConfirmSafetyCheck(false);
               setDeleteTarget({
                 type: 'reset_database',
-                title: 'Seluruh Database SIMPATI',
-                subtitle: 'Mengosongkan seluruh data master dan jadwal pembelajaran sehingga database bersih dari awal (Clean Slate).',
-                badge: 'Bersihkan Database',
-                warningNote: 'PERHATIAN: Tindakan ini akan mengosongkan seluruh guru, mapel, kelas, jurusan, ruangan, dan jadwal dari sistem. Akun administrator tetap dipertahankan.'
+                title: 'Seluruh Database SIMPATI (Clean Slate)',
+                subtitle: `Mengosongkan total ${totalItems} data master dan jadwal pembelajaran sehingga database bersih dari awal (Clean Slate).`,
+                badge: 'Clean Slate Total',
+                itemCount: totalItems,
+                itemUnit: 'data sekolah',
+                warningNote: 'PERINGATAN TINGGI: Seluruh data Guru, Mapel, Kelas, Jurusan, Ruangan, dan Jadwal Pelajaran akan dikosongkan dari server dan Cloud Firestore. Akun administrator tetap dipertahankan.'
               });
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
@@ -2041,12 +2067,15 @@ export const DataMasterView: React.FC = () => {
               {schedules.length > 0 && (
                 <button
                   onClick={() => {
+                    setConfirmSafetyCheck(false);
                     setDeleteTarget({
                       type: 'semua_jadwal',
                       title: 'Kosongkan Seluruh Jadwal Pelajaran',
-                      subtitle: `Total: ${schedules.length} slot jadwal pelajaran terdaftar`,
+                      subtitle: `Total: ${schedules.length} slot jadwal pelajaran terdaftar di semua rombel kelas`,
                       badge: 'Semua Kelas',
-                      warningNote: 'Seluruh jadwal pelajaran akan dihapus. Data Master Guru, Mapel, Kelas, dan Ruangan TETAP AMAN dan tidak akan terhapus.'
+                      itemCount: schedules.length,
+                      itemUnit: 'slot jadwal',
+                      warningNote: 'PERHATIAN: Seluruh jadwal pelajaran akan dihapus. Data Master Guru, Mapel, Kelas, dan Ruangan TETAP AMAN dan tidak akan terhapus.'
                     });
                   }}
                   className="text-rose-600 hover:text-rose-800 text-[11px] font-semibold flex items-center gap-1 hover:underline cursor-pointer"
@@ -3788,112 +3817,193 @@ export const DataMasterView: React.FC = () => {
         onImport={handleImportScheduleData}
       />
 
-      {/* MODAL: KONFIRMASI HAPUS DATA (IN-APP DIALOG) */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
-            {/* Header */}
-            <div className="p-5 bg-gradient-to-r from-rose-50 to-orange-50 border-b border-rose-100 flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 shadow-2xs">
-                <Trash2 className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-base font-extrabold text-slate-900 leading-snug">
-                  {deleteTarget.type === 'semua_jadwal'
-                    ? 'Konfirmasi Kosongkan Jadwal'
-                    : deleteTarget.type === 'kosongkan_tab'
-                    ? `Konfirmasi Kosongkan ${deleteTarget.title}`
-                    : deleteTarget.type === 'reset_database'
-                    ? 'Konfirmasi Reset Database'
-                    : 'Konfirmasi Hapus Data'}
-                </h3>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Tindakan ini akan menghapus data yang dipilih dari sistem secara permanen.
-                </p>
-              </div>
-              <button
-                onClick={() => setDeleteTarget(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 transition"
-                title="Batal"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* MODAL: KONFIRMASI HAPUS DATA & PERINGATAN KRUSIAL (IN-APP DIALOG) */}
+      {deleteTarget && (() => {
+        const isBulkOrCritical =
+          deleteTarget.type === 'kosongkan_tab' ||
+          deleteTarget.type === 'reset_database' ||
+          deleteTarget.type === 'semua_jadwal';
 
-            {/* Body */}
-            <div className="p-5 space-y-4">
-              {/* Item Card */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    {deleteTarget.type === 'guru'
-                      ? 'DATA GURU'
-                      : deleteTarget.type === 'mapel'
-                      ? 'MATA PELAJARAN'
-                      : deleteTarget.type === 'jurusan'
-                      ? 'PROGRAM KEAHLIAN'
-                      : deleteTarget.type === 'kelas'
-                      ? 'ROMBEL KELAS'
-                      : deleteTarget.type === 'ruang'
-                      ? 'RUANG & BENGKEL'
-                      : deleteTarget.type === 'tahun_pelajaran'
-                      ? 'TAHUN PELAJARAN'
-                      : deleteTarget.type === 'jadwal'
-                      ? 'JADWAL PELAJARAN'
-                      : 'AKSI SISTEM'}
-                  </span>
-                  {deleteTarget.badge && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200 shadow-2xs">
-                      {deleteTarget.badge}
-                    </span>
-                  )}
+        return (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+            <div className={`bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border ${
+              isBulkOrCritical ? 'border-rose-400 ring-4 ring-rose-500/15' : 'border-slate-200'
+            } animate-in zoom-in-95 duration-150`}>
+              
+              {/* Header */}
+              <div className={`p-5 border-b flex items-start gap-3.5 ${
+                isBulkOrCritical
+                  ? 'bg-gradient-to-r from-rose-50 via-red-50 to-orange-50 border-rose-200'
+                  : 'bg-gradient-to-r from-rose-50 to-orange-50 border-rose-100'
+              }`}>
+                <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-2xs ${
+                  isBulkOrCritical
+                    ? 'bg-rose-600 text-white animate-pulse'
+                    : 'bg-rose-100 text-rose-600'
+                }`}>
+                  <AlertTriangle className="w-6 h-6" />
                 </div>
-                <h4 className="font-extrabold text-slate-900 text-sm">{deleteTarget.title}</h4>
-                {deleteTarget.subtitle && (
-                  <p className="text-xs text-slate-600 mt-0.5">{deleteTarget.subtitle}</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-rose-100 text-rose-800 border border-rose-200">
+                      {isBulkOrCritical ? '⚠️ Peringatan Krusial' : 'Konfirmasi Penghapusan'}
+                    </span>
+                    {deleteTarget.badge && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200 shadow-2xs">
+                        {deleteTarget.badge}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-base font-extrabold text-slate-900 leading-snug mt-1">
+                    {deleteTarget.type === 'semua_jadwal'
+                      ? 'Peringatan: Kosongkan Seluruh Jadwal'
+                      : deleteTarget.type === 'kosongkan_tab'
+                      ? `Peringatan: Kosongkan ${deleteTarget.title}`
+                      : deleteTarget.type === 'reset_database'
+                      ? 'Peringatan Krusial: Bersihkan Database (Clean Slate)'
+                      : 'Konfirmasi Hapus Data'}
+                  </h3>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Harap baca peringatan ini dengan teliti sebelum melanjutkan.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setDeleteTarget(null);
+                    setConfirmSafetyCheck(false);
+                  }}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 transition cursor-pointer"
+                  title="Batal"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+                {/* Kotak Pertanyaan Eksplisit */}
+                <div className={`p-4 rounded-xl border-2 ${
+                  isBulkOrCritical
+                    ? 'bg-rose-50/90 border-rose-300'
+                    : 'bg-amber-50/90 border-amber-300'
+                }`}>
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${
+                      isBulkOrCritical ? 'text-rose-600' : 'text-amber-600'
+                    }`} />
+                    <div className="space-y-1">
+                      <h4 className="font-extrabold text-sm text-slate-900 leading-snug">
+                        {isBulkOrCritical
+                          ? `Apakah Anda benar-benar yakin ingin menghapus / mengosongkan seluruh data pada ${deleteTarget.title}?`
+                          : `Apakah Anda benar-benar yakin ingin menghapus data "${deleteTarget.title}" ini?`}
+                      </h4>
+                      <p className="text-xs text-slate-700 leading-relaxed">
+                        {deleteTarget.subtitle}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rincian Dampak untuk Operasi Krusial */}
+                {isBulkOrCritical && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-800">Rincian Data yang Akan Dihapus:</span>
+                      {deleteTarget.itemCount !== undefined && (
+                        <span className="font-extrabold text-rose-700 bg-rose-100/80 px-2.5 py-0.5 rounded-full border border-rose-300 text-[11px]">
+                          {deleteTarget.itemCount} {deleteTarget.itemUnit || 'item'} akan dihapus
+                        </span>
+                      )}
+                    </div>
+                    <ul className="text-xs text-slate-600 space-y-1.5 list-disc list-inside">
+                      {deleteTarget.type === 'reset_database' ? (
+                        <>
+                          <li>Seluruh Guru ({teachers.length} orang), Mata Pelajaran ({subjects.length} mapel), dan Jurusan ({departments.length} bidang) akan dikosongkan.</li>
+                          <li>Seluruh Rombel Kelas ({classes.length} kelas), Ruangan/Bengkel ({rooms.length} ruang), dan Jadwal Pelajaran ({schedules.length} slot) akan dikosongkan.</li>
+                          <li>Akun administrator dan tahun ajaran aktif tetap dipertahankan agar Anda tetap bisa login.</li>
+                          <li>Database Cloud Firestore dan server lokal akan langsung dibersihkan menjadi 0 data (Clean Slate).</li>
+                        </>
+                      ) : deleteTarget.type === 'kosongkan_tab' ? (
+                        <>
+                          <li>Seluruh record pada menu <strong>{deleteTarget.title}</strong> akan segera dihapus permanen.</li>
+                          <li>Perubahan langsung disinkronkan ke Cloud Firestore dan seluruh perangkat yang terhubung.</li>
+                          <li>Tabel akan kosong (0 data) hingga Anda menambahkan atau mengimpor data baru.</li>
+                        </>
+                      ) : (
+                        <>
+                          <li>Seluruh {schedules.length} slot jadwal pelajaran akan dibersihkan dari seluruh rombel kelas (Kelas 10, 11, dan 12).</li>
+                          <li>Agenda mengajar seluruh guru akan dikosongkan.</li>
+                          <li>Data Master Guru, Mapel, Kelas, dan Ruangan TETAP AMAN dan tidak akan terhapus.</li>
+                        </>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Peringatan Permanen */}
+                {deleteTarget.warningNote && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900 leading-relaxed">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>{deleteTarget.warningNote}</div>
+                  </div>
+                )}
+
+                {/* Checkbox Konfirmasi Keamanan Wajib Centang untuk Aksi Krusial */}
+                {isBulkOrCritical && (
+                  <label className="flex items-start gap-3 p-3.5 bg-gradient-to-r from-rose-50 to-orange-50 border-2 border-rose-300 rounded-xl cursor-pointer hover:border-rose-400 transition select-none">
+                    <input
+                      type="checkbox"
+                      checked={confirmSafetyCheck}
+                      onChange={(e) => setConfirmSafetyCheck(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded border-rose-400 text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
+                    />
+                    <div className="text-xs text-rose-950 font-bold leading-snug">
+                      Ya, saya benar-benar memahami risiko ini dan mengonfirmasi bahwa seluruh data tersebut harus dihapus sekarang.
+                    </div>
+                  </label>
                 )}
               </div>
 
-              {/* Warning box */}
-              {deleteTarget.warningNote && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div className="flex-1 leading-relaxed">
-                    {deleteTarget.warningNote}
-                  </div>
-                </div>
-              )}
-            </div>
+              {/* Footer */}
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteTarget(null);
+                    setConfirmSafetyCheck(false);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl transition cursor-pointer shadow-2xs"
+                >
+                  Batal, Jangan Hapus
+                </button>
+                <button
+                  type="button"
+                  disabled={isBulkOrCritical && !confirmSafetyCheck}
+                  onClick={handleConfirmDelete}
+                  className={`px-4 py-2 text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer ${
+                    isBulkOrCritical && !confirmSafetyCheck
+                      ? 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
+                      : 'text-white bg-rose-600 hover:bg-rose-700 shadow-rose-600/20 ring-2 ring-rose-500/20'
+                  }`}
+                  title={isBulkOrCritical && !confirmSafetyCheck ? 'Centang kotak konfirmasi di atas terlebih dahulu untuk mengaktifkan tombol ini' : 'Lanjutkan penghapusan data'}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>
+                    {deleteTarget.type === 'semua_jadwal'
+                      ? 'Ya, Benar-benar Bersihkan Jadwal'
+                      : deleteTarget.type === 'kosongkan_tab'
+                      ? `Ya, Benar-benar Kosongkan ${deleteTarget.title}`
+                      : deleteTarget.type === 'reset_database'
+                      ? 'Ya, Benar-benar Bersihkan Seluruh Database'
+                      : 'Ya, Hapus Data Ini'}
+                  </span>
+                </button>
+              </div>
 
-            {/* Footer */}
-            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setDeleteTarget(null)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-200/70 rounded-xl transition"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>
-                  {deleteTarget.type === 'semua_jadwal'
-                    ? 'Ya, Bersihkan Jadwal'
-                    : deleteTarget.type === 'kosongkan_tab'
-                    ? 'Ya, Kosongkan Tab Ini'
-                    : deleteTarget.type === 'reset_database'
-                    ? 'Ya, Reset Database'
-                    : 'Ya, Hapus Data Ini'}
-                </span>
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL: PERINGATAN / ALERT DIALOG */}
       {deleteAlertModal && (
