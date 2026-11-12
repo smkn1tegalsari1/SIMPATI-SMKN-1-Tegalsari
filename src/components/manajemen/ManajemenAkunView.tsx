@@ -41,6 +41,7 @@ export const ManajemenAkunView: React.FC = () => {
     updateUserAccount,
     deleteUserAccount,
     syncAccountsFromTeachers,
+    resetAllTeacherPasswordsToDefault,
     updatePiketDays,
     currentUser,
     currentDayName,
@@ -75,15 +76,16 @@ export const ManajemenAkunView: React.FC = () => {
   const [isAddEditModalOpen, setIsAddEditModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<UserAccount | null>(null);
   const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false);
+  const [isMassResetModalOpen, setIsMassResetModalOpen] = useState(false);
   const [resetAccount, setResetAccount] = useState<UserAccount | null>(null);
-  const [newResetPassword, setNewResetPassword] = useState('guru123');
+  const [newResetPassword, setNewResetPassword] = useState('semakasari123!');
   const [deleteConfirmAccount, setDeleteConfirmAccount] = useState<UserAccount | null>(null);
 
   // Form State for Add / Edit
   const [formTeacherId, setFormTeacherId] = useState<string>('');
   const [formName, setFormName] = useState('');
   const [formUsername, setFormUsername] = useState('');
-  const [formPassword, setFormPassword] = useState('guru123');
+  const [formPassword, setFormPassword] = useState('semakasari123!');
   const [formRole, setFormRole] = useState<AccountRole>('guru');
   const [formPiketDays, setFormPiketDays] = useState<string[]>([]);
   const [formStatus, setFormStatus] = useState<'aktif' | 'nonaktif'>('aktif');
@@ -117,7 +119,7 @@ export const ManajemenAkunView: React.FC = () => {
     setFormTeacherId('');
     setFormName('');
     setFormUsername('');
-    setFormPassword('guru123');
+    setFormPassword('semakasari123!');
     setFormRole('guru');
     setFormPiketDays([]);
     setFormStatus('aktif');
@@ -355,16 +357,25 @@ export const ManajemenAkunView: React.FC = () => {
 
           <button
             onClick={handleSyncAll}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs"
-            title="Sinkronkan data akun secara otomatis dengan seluruh daftar guru di Data Master"
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs cursor-pointer"
+            title="Sinkronkan data akun secara otomatis dengan seluruh daftar guru di Data Master, password default guru: semakasari123!"
           >
             <RefreshCw className="w-3.5 h-3.5 text-teal-600" />
             <span>Sinkronkan Data Guru</span>
           </button>
 
           <button
+            onClick={() => setIsMassResetModalOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-xl transition shadow-2xs cursor-pointer"
+            title="Reset seluruh password guru ke default: semakasari123!"
+          >
+            <Key className="w-3.5 h-3.5 text-amber-700" />
+            <span>Reset Password Guru (semakasari123!)</span>
+          </button>
+
+          <button
             onClick={openAddModal}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-[#0B1E2E] bg-[#E59819] hover:bg-[#d68c14] rounded-xl transition shadow-md"
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-[#0B1E2E] bg-[#E59819] hover:bg-[#d68c14] rounded-xl transition shadow-md cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
             <span>Tambah Akun Baru</span>
@@ -709,7 +720,7 @@ export const ManajemenAkunView: React.FC = () => {
                               <button
                                 onClick={() => {
                                   setResetAccount(acc);
-                                  setNewResetPassword('guru123');
+                                  setNewResetPassword(acc.role === 'guru' ? 'semakasari123!' : 'admin123');
                                   setIsResetPasswordModalOpen(true);
                                 }}
                                 className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
@@ -965,7 +976,7 @@ export const ManajemenAkunView: React.FC = () => {
                     required
                     value={formPassword}
                     onChange={(e) => setFormPassword(e.target.value)}
-                    placeholder="Contoh: guru123"
+                    placeholder="Contoh: semakasari123!"
                     className="w-full text-xs font-mono p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-cyan-500 outline-none"
                   />
                 </div>
@@ -1128,10 +1139,10 @@ export const ManajemenAkunView: React.FC = () => {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setNewResetPassword('guru123')}
-                  className="text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
+                  onClick={() => setNewResetPassword('semakasari123!')}
+                  className="text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition cursor-pointer"
                 >
-                  Set ke Default "guru123"
+                  Set ke Default "semakasari123!"
                 </button>
                 <button
                   type="button"
@@ -1197,6 +1208,51 @@ export const ManajemenAkunView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* MODAL: MASS RESET GURU PASSWORDS */}
+      {isMassResetModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 p-6 space-y-4">
+            <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center mx-auto">
+              <Key className="w-6 h-6" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="font-extrabold text-base text-slate-900">Reset Seluruh Password Akun Guru?</h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Tindakan ini akan mengatur ulang kata sandi seluruh akun guru (<b>{userAccounts.filter((a) => a.role === 'guru').length} akun</b>) menjadi password default:
+              </p>
+              <div className="py-2 px-3 bg-amber-50 border border-amber-200 rounded-xl inline-block">
+                <code className="text-sm font-bold font-mono text-amber-900">semakasari123!</code>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Setelah direset, seluruh akun guru dapat login langsung menggunakan username masing-masing dan password di atas. Perubahan akan otomatis disimpan dan disinkronkan ke database server & cloud.
+              </p>
+            </div>
+            <div className="flex gap-2 justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setIsMassResetModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = resetAllTeacherPasswordsToDefault();
+                  showToast(res.message);
+                  setIsMassResetModalOpen(false);
+                }}
+                className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition shadow-md cursor-pointer flex items-center gap-2"
+              >
+                <Key className="w-3.5 h-3.5" />
+                <span>Ya, Reset Semua Password Guru</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

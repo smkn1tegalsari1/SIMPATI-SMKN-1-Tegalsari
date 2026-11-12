@@ -168,11 +168,15 @@ export function ensureDefaultAccounts(accounts: any[]): UserAccount[] {
     if (accId) seenIds.add(accId);
     if (accUser) seenUsernames.add(accUser);
 
+    const isTeacher = acc.role === 'guru' || (!acc.role && !['usr-admin', 'usr-kepsek', 'usr-waka-kurikulum'].includes(acc.id));
+    const defaultPassword = isTeacher ? 'semakasari123!' : (acc.role === 'admin' ? 'admin123' : 'pimpinan123');
+    const finalPassword = (isTeacher && (!acc.password || acc.password === 'guru123')) ? 'semakasari123!' : (acc.password || defaultPassword);
+
     result.push({
       ...acc,
       id: acc.id || `usr-${Date.now().toString(36)}`,
       username: acc.username || `user_${acc.id}`,
-      password: acc.password || 'guru123',
+      password: finalPassword,
       name: acc.name || 'Pengguna SIMPATI',
       role: acc.role || 'guru',
       status: acc.status || 'aktif',

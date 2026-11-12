@@ -127,6 +127,7 @@ interface AppContextType {
   updateUserAccount: (account: UserAccount) => void;
   deleteUserAccount: (id: string) => void;
   syncAccountsFromTeachers: () => { created: number; updated: number; message: string };
+  resetAllTeacherPasswordsToDefault: () => { count: number; message: string };
   updatePiketDays: (accountId: string, days: string[]) => void;
   loginWithCredentials: (username: string, password: string) => Promise<{ success: boolean; message: string; user?: CurrentUser }>;
 
@@ -1250,13 +1251,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const idx = accounts.findIndex((a) => a.id === existingAcc.id);
           if (idx !== -1) {
             const old = accounts[idx];
-            if (old.name !== t.name || old.nip !== t.nip || old.teacherCode !== t.code || old.email !== t.email) {
+            const isOldDefault = !old.password || old.password === 'guru123';
+            if (
+              old.name !== t.name ||
+              old.nip !== t.nip ||
+              old.teacherCode !== t.code ||
+              old.email !== t.email ||
+              isOldDefault
+            ) {
               accounts[idx] = {
                 ...old,
                 name: t.name,
                 nip: t.nip,
                 teacherCode: t.code,
                 email: t.email,
+                password: isOldDefault ? 'semakasari123!' : old.password,
               };
               updated++;
             }
@@ -1272,7 +1281,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const newAccount: UserAccount = {
             id: `usr-${t.id}-${Date.now().toString(36)}`,
             username: usernameCandidate,
-            password: 'guru123',
+            password: 'semakasari123!',
             name: t.name,
             role: 'guru',
             teacherId: t.id,
@@ -1294,7 +1303,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return {
       created,
       updated,
-      message: `Sinkronisasi berhasil: ${created} akun baru ditambahkan, ${updated} akun diperbarui sesuai Data Guru.`,
+      message: `Sinkronisasi berhasil: ${created} akun baru ditambahkan, ${updated} akun diperbarui. Password default akun guru diatur ke: semakasari123!`,
+    };
+  };
+
+  const resetAllTeacherPasswordsToDefault = () => {
+    let count = 0;
+    updateUserAccountsAndSync((prev) =>
+      prev.map((acc) => {
+        if (acc.role === 'guru') {
+          count++;
+          return { ...acc, password: 'semakasari123!' };
+        }
+        return acc;
+      })
+    );
+    return {
+      count,
+      message: `Berhasil mereset password ${count} akun guru ke default "semakasari123!" dan disinkronkan ke database cloud!`,
     };
   };
 
@@ -1420,7 +1446,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const newAcc: UserAccount = {
         id: `usr-${teacher.id}`,
         username: teacher.code,
-        password: 'guru123',
+        password: 'semakasari123!',
         name: teacher.name,
         role: 'guru',
         teacherId: teacher.id,
@@ -2005,6 +2031,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUserAccount,
         deleteUserAccount,
         syncAccountsFromTeachers,
+        resetAllTeacherPasswordsToDefault,
         updatePiketDays,
         loginWithCredentials,
         addTeacher,
