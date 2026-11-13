@@ -48,6 +48,10 @@ import {
   ActiveWeekRotationType,
 } from '../../types';
 import { getMonthWeeks, toLocalDateISO } from '../../data/scheduleWeeks';
+import {
+  inferDepartmentFromClassName,
+  resolveDepartmentCode,
+} from '../../data/departmentUtils';
 import { BulkImportModal } from './BulkImportModal';
 import { ScheduleImportModal } from './ScheduleImportModal';
 import { BulkDeleteMasterModal } from './BulkDeleteMasterModal';
@@ -642,9 +646,7 @@ export const DataMasterView: React.FC = () => {
     e.preventDefault();
     if (!cCode || !cName) return;
     const teacherObj = teachers.find((t) => t.id === cHomeroom);
-    const resolvedDept = departments.some((d) => d.code === cDept)
-      ? cDept
-      : departments[0]?.code || cDept || 'UMUM';
+    const resolvedDept = resolveDepartmentCode(cDept, cName, departments);
     const newCls: SchoolClass = {
       id: `cl-${Date.now()}`,
       code: cCode,
@@ -937,16 +939,25 @@ export const DataMasterView: React.FC = () => {
   };
 
   const handleImportClasses = (parsed: Record<string, string>[]) => {
+    const deptCodes = departments.map((d) => d.code);
     const list: SchoolClass[] = parsed.map((p, i) => {
       const teacherObj = teachers.find((t) => t.name.toLowerCase().includes((p.walikelas || '').toLowerCase()));
       const gradeNum = p.tingkat?.includes('10') ? 10 : p.tingkat?.includes('12') ? 12 : 11;
       const homeroomName = teacherObj ? teacherObj.name : p.walikelas || '';
+      const rawName = p.nama || `Kelas ${i + 1}`;
+      const rawCode = p.kode || `KL-${i + 1}`;
+      const resolvedDept = p.jurusan
+        ? resolveDepartmentCode(p.jurusan, rawName, departments)
+        : inferDepartmentFromClassName(rawName, deptCodes) ||
+          inferDepartmentFromClassName(rawCode, deptCodes) ||
+          departments[0]?.code ||
+          'UMUM';
       return {
         id: `cl-imp-${Date.now()}-${i}`,
-        code: p.kode || `KL-${i + 1}`,
-        name: p.nama || `Kelas ${i + 1}`,
+        code: rawCode,
+        name: rawName,
         grade: gradeNum as 10 | 11 | 12,
-        department: p.jurusan || departments[0]?.code || 'UMUM',
+        department: resolvedDept,
         ...(teacherObj?.id ? { homeroomTeacherId: teacherObj.id } : {}),
         ...(homeroomName ? { homeroomTeacherName: homeroomName } : {}),
         totalStudents: 36,
@@ -1637,7 +1648,25 @@ export const DataMasterView: React.FC = () => {
                         <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">{c.code}</td>
                         <td className="py-2.5 px-3 font-bold text-slate-900 text-sm">{c.name}</td>
                         <td className="py-2.5 px-3 text-center font-semibold text-slate-700">Kelas {c.grade}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">{c.department}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">
+                          {(() => {
+                            const syncedDept = resolveDepartmentCode(c.department, c.name, departments);
+                            const rawUpper = (c.department || '').trim().toUpperCase();
+                            return (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span>{c.department || syncedDept}</span>
+                                {syncedDept && rawUpper !== syncedDept && (
+                                  <span
+                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-800 border border-cyan-200"
+                                    title={`Otomatis disinkronkan ke Jurusan ${syncedDept}`}
+                                  >
+                                    → {syncedDept}
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
+                        </td>
                         <td className="py-2.5 px-3 font-semibold text-cyan-900">
                           {c.homeroomTeacherName || <span className="text-slate-400 italic">Belum ditentukan</span>}
                         </td>
@@ -3060,7 +3089,17 @@ export const DataMasterView: React.FC = () => {
                   required
                   placeholder="Contoh: 11 TKJ 3"
                   value={cName}
-                  onChange={(e) => setCName(e.target.value)}
+                  onChange={(e) => {
+                    const nextName = e.target.value;
+                    setCName(nextName);
+                    const matchedDept = inferDepartmentFromClassName(
+                      nextName,
+                      departments.map((d) => d.code)
+                    );
+                    if (matchedDept && departments.some((d) => d.code === matchedDept)) {
+                      setCDept(matchedDept);
+                    }
+                  }}
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 />
               </div>

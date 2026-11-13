@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { ScheduleItem, ScheduleLessonStatus } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
+import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
 
 export const DashboardView: React.FC = () => {
   const {
@@ -32,6 +33,7 @@ export const DashboardView: React.FC = () => {
     activeWeekFilter,
     schedules,
     classes,
+    departments,
     setActiveMenu,
     getScheduleStatus,
   } = useApp();
@@ -58,10 +60,14 @@ export const DashboardView: React.FC = () => {
 
   // Helper resolusi jurusan secara real-time
   const getScheduleDept = (item: ScheduleItem): string => {
-    const cls = classes.find((c) => c.id === item.classId || c.name === item.className);
-    if (cls?.department && cls.department.trim()) return cls.department.trim().toUpperCase();
-    if (item.department && item.department.trim()) return item.department.trim().toUpperCase();
-    return 'UMUM';
+    const cls = classes.find(
+      (c) => c.id === item.classId || c.name?.trim().toUpperCase() === item.className?.trim().toUpperCase()
+    );
+    return resolveDepartmentCode(
+      cls?.department || item.department,
+      cls?.name || item.className,
+      departments
+    );
   };
 
   // Helper normalisasi nama hari dari jadwal
@@ -115,7 +121,7 @@ export const DashboardView: React.FC = () => {
 
       // 4. Filter Jurusan
       const deptCode = getScheduleDept(item);
-      if (filterDept !== 'all' && deptCode !== filterDept.toUpperCase()) {
+      if (filterDept !== 'all' && !areDepartmentsEquivalent(deptCode, filterDept)) {
         return false;
       }
 
@@ -137,6 +143,7 @@ export const DashboardView: React.FC = () => {
   }, [
     schedules,
     classes,
+    departments,
     tableWeekFilter,
     effectiveWeekType,
     filterDay,

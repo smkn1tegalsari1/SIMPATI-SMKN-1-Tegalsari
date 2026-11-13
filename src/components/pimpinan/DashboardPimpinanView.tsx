@@ -15,6 +15,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
+import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
 
 export const DashboardPimpinanView: React.FC = () => {
   const {
@@ -79,21 +80,23 @@ export const DashboardPimpinanView: React.FC = () => {
   });
 
   classes.forEach((c) => {
-    if (c.department && !allDeptMap.has(c.department.toUpperCase())) {
-      allDeptMap.set(c.department.toUpperCase(), {
-        code: c.department,
-        name: `Program Keahlian ${c.department}`,
-        description: `Jurusan ${c.department}`,
+    const resolved = resolveDepartmentCode(c.department, c.name, departments);
+    if (resolved && !allDeptMap.has(resolved) && !Array.from(allDeptMap.keys()).some((k) => areDepartmentsEquivalent(k, resolved))) {
+      allDeptMap.set(resolved, {
+        code: resolved,
+        name: `Program Keahlian ${resolved}`,
+        description: `Jurusan ${resolved}`,
       });
     }
   });
 
   schedules.forEach((s) => {
-    if (s.department && !allDeptMap.has(s.department.toUpperCase())) {
-      allDeptMap.set(s.department.toUpperCase(), {
-        code: s.department,
-        name: `Program Keahlian ${s.department}`,
-        description: `Jurusan ${s.department}`,
+    const resolved = resolveDepartmentCode(s.department, s.className, departments);
+    if (resolved && !allDeptMap.has(resolved) && !Array.from(allDeptMap.keys()).some((k) => areDepartmentsEquivalent(k, resolved))) {
+      allDeptMap.set(resolved, {
+        code: resolved,
+        name: `Program Keahlian ${resolved}`,
+        description: `Jurusan ${resolved}`,
       });
     }
   });
@@ -102,15 +105,21 @@ export const DashboardPimpinanView: React.FC = () => {
   const deptStats = Array.from(allDeptMap.values()).map((dept) => {
     const upperCode = dept.code.toUpperCase();
 
-    const deptClasses = classes.filter(
-      (c) => (c.department || '').toUpperCase() === upperCode
-    );
+    const deptClasses = classes.filter((c) => {
+      const resolved = resolveDepartmentCode(c.department, c.name, departments);
+      return areDepartmentsEquivalent(resolved, upperCode);
+    });
 
     const deptSchedules = effectiveSchedules.filter((s) => {
-      const matchScheduleDept = (s.department || '').toUpperCase() === upperCode;
-      const classObj = classes.find((c) => c.id === s.classId);
-      const matchClassDept = (classObj?.department || '').toUpperCase() === upperCode;
-      return matchScheduleDept || matchClassDept;
+      const classObj = classes.find(
+        (c) => c.id === s.classId || c.name?.trim().toUpperCase() === s.className?.trim().toUpperCase()
+      );
+      const resolved = resolveDepartmentCode(
+        classObj?.department || s.department,
+        classObj?.name || s.className,
+        departments
+      );
+      return areDepartmentsEquivalent(resolved, upperCode);
     });
 
     let berlangsung = 0;

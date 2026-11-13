@@ -28,6 +28,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { ScheduleItem } from '../../types';
+import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
 
 interface TimeStatusResult {
   status: 'sedang_berlangsung' | 'sudah_selesai' | 'terjadwal';
@@ -316,9 +317,15 @@ export const ModeTVSekolahView: React.FC = () => {
 
       // Filter Dept
       if (selectedDept !== 'ALL') {
-        const cls = classes.find((c) => c.id === item.classId || c.name === item.className);
-        const itemDept = (cls?.department || item.department || 'UMUM').toUpperCase();
-        if (itemDept !== selectedDept.toUpperCase()) {
+        const cls = classes.find(
+          (c) => c.id === item.classId || c.name?.trim().toUpperCase() === item.className?.trim().toUpperCase()
+        );
+        const itemDept = resolveDepartmentCode(
+          cls?.department || item.department,
+          cls?.name || item.className,
+          departments
+        );
+        if (!areDepartmentsEquivalent(itemDept, selectedDept)) {
           return false;
         }
       }
@@ -337,7 +344,7 @@ export const ModeTVSekolahView: React.FC = () => {
 
       return true;
     });
-  }, [enrichedSchedules, dayFilter, statusFilter, selectedDept, searchQuery, weekFilter, effectiveWeekType]);
+  }, [enrichedSchedules, dayFilter, statusFilter, selectedDept, searchQuery, weekFilter, effectiveWeekType, classes, departments]);
 
   // Summary statistics for TV Header Cards
   const stats = useMemo(() => {

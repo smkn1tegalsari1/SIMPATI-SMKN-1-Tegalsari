@@ -27,6 +27,11 @@ import {
   MatrixRowClass,
   MatrixSlotData,
 } from '../../data/monitoringMatrixPreset';
+import {
+  areDepartmentsEquivalent,
+  getDepartmentInfo,
+  resolveDepartmentCode,
+} from '../../data/departmentUtils';
 
 interface MonitoringJadwalMatrixProps {
   onSwitchToCardView?: () => void;
@@ -121,12 +126,22 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
     else baseRows = PRESET_KELAS_XII;
 
     // Ambil daftar kelas dari database master jika ada
+    const fallbackProgCodes = VOCATIONAL_PROGRAMS.map((p) => p.code);
     const dbClasses = masterClasses.filter((c) => c.grade === selectedGrade);
     const targetClasses: { id: string; className: string; programCode: string; programName: string }[] =
       dbClasses.length > 0
         ? dbClasses.map((c) => {
-            const prog = c.department || c.name.split(' ')[1] || 'UMUM';
-            const progName = masterDepartments.find((d) => d.code === prog)?.name || `Program ${prog}`;
+            const prog = resolveDepartmentCode(
+              c.department,
+              c.name,
+              masterDepartments,
+              fallbackProgCodes
+            );
+            const deptInfo = getDepartmentInfo(prog, masterDepartments);
+            const presetProg = VOCATIONAL_PROGRAMS.find((p) =>
+              areDepartmentsEquivalent(p.code, prog)
+            );
+            const progName = deptInfo?.name || presetProg?.name || `Program ${prog}`;
             return {
               id: c.id,
               className: c.name,
@@ -134,12 +149,21 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
               programName: progName,
             };
           })
-        : baseRows.map((b) => ({
-            id: b.id,
-            className: b.className,
-            programCode: b.programCode,
-            programName: b.programName,
-          }));
+        : baseRows.map((b) => {
+            const prog = resolveDepartmentCode(
+              b.programCode,
+              b.className,
+              masterDepartments,
+              fallbackProgCodes
+            );
+            const deptInfo = getDepartmentInfo(prog, masterDepartments);
+            return {
+              id: b.id,
+              className: b.className,
+              programCode: prog,
+              programName: deptInfo?.name || b.programName,
+            };
+          });
 
     return targetClasses.map((cls, idx) => {
       // Cari preset fallback untuk kelas ini jika ada
@@ -209,11 +233,40 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
     effectiveWeekType,
   ]);
 
+  // Daftar Program Keahlian di sidebar disinkronkan dari Master Jurusan & kelas aktif
+  const sidebarPrograms = useMemo(() => {
+    const baseList =
+      masterDepartments.length > 0
+        ? masterDepartments.map((d) => ({
+            code: d.code.trim().toUpperCase(),
+            name: d.name || `Program ${d.code}`,
+          }))
+        : VOCATIONAL_PROGRAMS.map((p) => ({
+            code: p.code,
+            name: p.name,
+          }));
+
+    const seen = new Set(baseList.map((b) => b.code));
+    const extras: { code: string; name: string }[] = [];
+    matrixRows.forEach((r) => {
+      const code = (r.programCode || '').trim().toUpperCase();
+      if (
+        code &&
+        !seen.has(code) &&
+        !baseList.some((b) => areDepartmentsEquivalent(b.code, code))
+      ) {
+        seen.add(code);
+        extras.push({ code, name: r.programName || `Program ${code}` });
+      }
+    });
+    return [...baseList, ...extras];
+  }, [masterDepartments, matrixRows]);
+
   // Filter berdasarkan Program Keahlian & Search Query
   const filteredRows = useMemo(() => {
     return matrixRows.filter((row) => {
-      // Filter program
-      if (selectedProgram !== 'ALL' && row.programCode !== selectedProgram) {
+      // Filter program (mendukung alias seperti KL <-> KLR)
+      if (selectedProgram !== 'ALL' && !areDepartmentsEquivalent(row.programCode, selectedProgram)) {
         return false;
       }
       // Filter search
@@ -281,7 +334,7 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
 
   // Program badge color helper
   const getProgramBadge = (code: string) => {
-    const prog = VOCATIONAL_PROGRAMS.find((p) => p.code === code);
+    const prog = VOCATIONAL_PROGRAMS.find((p) => areDepartmentsEquivalent(p.code, code));
     if (!prog) return { bg: 'bg-slate-600', text: 'text-white' };
     return { bg: prog.badgeBg, text: prog.badgeText };
   };
@@ -579,19 +632,25 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
               </label>
 
               {/* Radio per Program */}
-              {VOCATIONAL_PROGRAMS.map((prog) => {
+              {sidebarPrograms.map((prog) => {
                 // Hitung jumlah kelas yang ada untuk program ini di grade yang dipilih
-                const count = matrixRows.filter((r) => r.programCode === prog.code).length;
+                const count = matrixRows.filter((r) =>
+                  areDepartmentsEquivalent(r.programCode, prog.code)
+                ).length;
+                const isSelected =
+                  selectedProgram !== 'ALL' &&
+                  areDepartmentsEquivalent(selectedProgram, prog.code);
                 return (
                   <label
                     key={prog.code}
                     className="flex items-center justify-between gap-2 text-xs text-slate-700 hover:text-slate-900 cursor-pointer select-none group"
+                    title={prog.name}
                   >
                     <div className="flex items-center gap-2.5">
                       <input
                         type="radio"
                         name="programFilter"
-                        checked={selectedProgram === prog.code}
+                        checked={isSelected}
                         onChange={() => setSelectedProgram(prog.code)}
                         className="w-4 h-4 text-cyan-600 focus:ring-cyan-500 border-slate-300"
                       />

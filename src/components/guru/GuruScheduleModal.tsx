@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Teacher, Subject, SchoolClass, Room, ScheduleItem, ScheduleWeekType } from '../../types';
 import { PERIOD_TIMES } from '../../data/initialData';
+import { resolveDepartmentCode } from '../../data/departmentUtils';
 
 interface GuruScheduleModalProps {
   isOpen: boolean;
@@ -257,7 +258,10 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
     const roomNameResult = selRoom?.name || customRoomName.trim() || 'Ruang Teori';
     const roomTypeResult = selRoom?.type || 'Teori';
     const classNameResult = selClass?.name || 'Kelas';
-    const departmentResult = selClass?.department || teacher.department || 'UMUM';
+    const departmentResult = resolveDepartmentCode(
+      selClass?.department || teacher.department,
+      selClass?.name
+    );
 
     const schedulesToSave: ScheduleItem[] = targetPeriods.map((pNum, index) => {
       const periodObj = PERIOD_TIMES.find((p) => p.period === pNum) || {

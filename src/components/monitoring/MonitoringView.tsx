@@ -19,6 +19,7 @@ import {
 import { ScheduleItem, ScheduleLessonStatus } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 import { MonitoringJadwalMatrix } from './MonitoringJadwalMatrix';
+import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
 
 export const MonitoringView: React.FC = () => {
   const [viewMode, setViewMode] = useState<'matrix' | 'cards'>('matrix');
@@ -41,21 +42,14 @@ export const MonitoringView: React.FC = () => {
 
   // Helper resolusi jurusan secara real-time dari relasi data class, schedule, dan master jurusan
   const getScheduleDept = (item: ScheduleItem): string => {
-    const cls = classes.find((c) => c.id === item.classId || c.name === item.className);
-    if (cls?.department && cls.department.trim()) {
-      return cls.department.trim().toUpperCase();
-    }
-    if (item.department && item.department.trim()) {
-      return item.department.trim().toUpperCase();
-    }
-    if (item.className) {
-      for (const d of masterDepartments) {
-        if (d.code && item.className.toUpperCase().includes(d.code.toUpperCase())) {
-          return d.code.toUpperCase();
-        }
-      }
-    }
-    return 'UMUM';
+    const cls = classes.find(
+      (c) => c.id === item.classId || c.name?.trim().toUpperCase() === item.className?.trim().toUpperCase()
+    );
+    return resolveDepartmentCode(
+      cls?.department || item.department,
+      cls?.name || item.className,
+      masterDepartments
+    );
   };
 
   // Kumpulkan seluruh jurusan secara REAL-TIME dari Master Data & Rombel Kelas
@@ -64,10 +58,11 @@ export const MonitoringView: React.FC = () => {
     const seen = new Set<string>();
 
     masterDepartments.forEach((d) => {
-      if (d.code && !seen.has(d.code.toUpperCase())) {
-        seen.add(d.code.toUpperCase());
+      const code = (d.code || '').trim().toUpperCase();
+      if (code && !seen.has(code)) {
+        seen.add(code);
         list.push({
-          code: d.code.toUpperCase(),
+          code,
           name: d.name || `Program Keahlian ${d.code}`,
           description: d.description,
         });
@@ -75,11 +70,12 @@ export const MonitoringView: React.FC = () => {
     });
 
     classes.forEach((c) => {
-      if (c.department && !seen.has(c.department.toUpperCase())) {
-        seen.add(c.department.toUpperCase());
+      const resolved = resolveDepartmentCode(c.department, c.name, masterDepartments);
+      if (resolved && !seen.has(resolved) && !list.some((d) => areDepartmentsEquivalent(d.code, resolved))) {
+        seen.add(resolved);
         list.push({
-          code: c.department.toUpperCase(),
-          name: `Jurusan ${c.department.toUpperCase()}`,
+          code: resolved,
+          name: `Jurusan ${resolved}`,
         });
       }
     });
@@ -90,7 +86,7 @@ export const MonitoringView: React.FC = () => {
   useEffect(() => {
     if (selectedDept !== 'ALL') {
       const exists = dynamicDepartments.some(
-        (d) => d.code.toUpperCase() === selectedDept.toUpperCase()
+        (d) => areDepartmentsEquivalent(d.code, selectedDept)
       );
       if (!exists) {
         setSelectedDept('ALL');
@@ -133,7 +129,7 @@ export const MonitoringView: React.FC = () => {
 
       // 2. Filter Jurusan
       const itemDept = getScheduleDept(s).toUpperCase();
-      const matchDept = selectedDept === 'ALL' || itemDept === selectedDept.toUpperCase();
+      const matchDept = selectedDept === 'ALL' || areDepartmentsEquivalent(itemDept, selectedDept);
 
       // 3. Filter Jam Pelajaran
       const numPeriod = typeof s.periodIndex === 'number' ? s.periodIndex : parseInt(String(s.periodIndex), 10);
@@ -176,7 +172,7 @@ export const MonitoringView: React.FC = () => {
         if (itemWeek !== 'ALL' && itemWeek !== selectedWeek) return false;
       }
       const itemDept = getScheduleDept(s).toUpperCase();
-      if (selectedDept !== 'ALL' && itemDept !== selectedDept.toUpperCase()) return false;
+      if (selectedDept !== 'ALL' && !areDepartmentsEquivalent(itemDept, selectedDept)) return false;
       const numPeriod = typeof s.periodIndex === 'number' ? s.periodIndex : parseInt(String(s.periodIndex), 10);
       if (selectedPeriod !== 'ALL' && numPeriod !== selectedPeriod && String(s.periodIndex) !== String(selectedPeriod)) return false;
       return true;

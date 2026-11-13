@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ScheduleLessonStatus } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
+import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
 
 export const LaporanView: React.FC = () => {
   const {
@@ -41,8 +42,15 @@ export const LaporanView: React.FC = () => {
       if (itemWeek !== 'ALL' && itemWeek !== filterWeek) return false;
     }
 
-    const itemDept = s.department || classes.find((c) => c.id === s.classId)?.department || 'UMUM';
-    const matchDept = filterDept === 'all' || itemDept.toUpperCase() === filterDept.toUpperCase();
+    const cls = classes.find(
+      (c) => c.id === s.classId || c.name?.trim().toUpperCase() === s.className?.trim().toUpperCase()
+    );
+    const itemDept = resolveDepartmentCode(
+      cls?.department || s.department,
+      cls?.name || s.className,
+      departments
+    );
+    const matchDept = filterDept === 'all' || areDepartmentsEquivalent(itemDept, filterDept);
 
     const status = getScheduleStatus(s);
     const matchStatus = filterStatus === 'all' || status === filterStatus;
