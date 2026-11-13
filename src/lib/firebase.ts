@@ -1,12 +1,25 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, doc, getDocFromServer, Firestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Inisialisasi Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Inisialisasi Firestore dengan database ID khusus SIMPATI
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
+
+// Inisialisasi Firestore dengan ignoreUndefinedProperties agar field opsional tidak pernah menggagalkan penyimpanan
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = initializeFirestore(
+    app,
+    { ignoreUndefinedProperties: true },
+    databaseId
+  );
+} catch {
+  firestoreInstance = getFirestore(app, databaseId);
+}
+
+export const db = firestoreInstance;
 
 // Helper penguji koneksi cloud Firestore
 export async function testFirestoreConnection(): Promise<boolean> {

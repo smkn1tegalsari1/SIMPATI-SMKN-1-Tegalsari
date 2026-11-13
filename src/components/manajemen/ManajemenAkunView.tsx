@@ -47,7 +47,6 @@ export const ManajemenAkunView: React.FC = () => {
     currentDayName,
     currentDateString,
     currentTimeString,
-    refreshFromServer,
     isServerConnected,
     isCloudConnected,
   } = useApp();
@@ -58,19 +57,6 @@ export const ManajemenAkunView: React.FC = () => {
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isSyncingServer, setIsSyncingServer] = useState<boolean>(false);
-
-  const handleRefreshServer = async () => {
-    setIsSyncingServer(true);
-    try {
-      await refreshFromServer();
-      showToast('Database akun berhasil disinkronkan langsung dengan server!');
-    } catch (e) {
-      showToast('Gagal menyinkronkan dengan database server.');
-    } finally {
-      setIsSyncingServer(false);
-    }
-  };
 
   // Modal States
   const [isAddEditModalOpen, setIsAddEditModalOpen] = useState(false);
@@ -345,16 +331,6 @@ export const ManajemenAkunView: React.FC = () => {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={handleRefreshServer}
-            disabled={isSyncingServer}
-            className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-300 rounded-xl transition shadow-2xs disabled:opacity-50"
-            title="Ambil data terpusat dari database server untuk memastikan akun admin dan seluruh data telah sinkron"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-sky-600 ${isSyncingServer ? 'animate-spin' : ''}`} />
-            <span>{isSyncingServer ? 'Menyinkronkan...' : 'Sinkronkan Database Server'}</span>
-          </button>
-
           <button
             onClick={handleSyncAll}
             className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-300 rounded-xl transition shadow-2xs cursor-pointer"

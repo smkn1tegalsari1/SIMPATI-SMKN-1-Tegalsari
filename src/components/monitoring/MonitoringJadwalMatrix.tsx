@@ -16,7 +16,6 @@ import {
   MapPin,
   UserCheck,
   Building,
-  RotateCw,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -48,7 +47,6 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
     effectiveWeekType,
     attendanceRecords,
     isCloudConnected,
-    seedDatabaseFromPreset,
     addSchedule,
     deleteSchedule,
     currentUser,
@@ -62,7 +60,6 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
     'P10_NORM_P11_PROD' | 'P10_PROD_P11_NORM' | 'AUTO' | 'PRODUKTIF' | 'NORMATIF'
   >('P10_NORM_P11_PROD');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncToast, setSyncToast] = useState<string | null>(null);
 
   // Modal State
@@ -102,24 +99,6 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
       ? 'Pekan 10 Produktif 11 Normada'
       : 'Pekan 10 Normada 11 Produktif';
   }, [selectedWeekMode, effectiveWeekType]);
-
-  // Handler sinkronisasi database paksa
-  const handleForceSync = async () => {
-    setIsSyncing(true);
-    try {
-      const ok = await seedDatabaseFromPreset();
-      if (ok) {
-        setSyncToast('Database master dan jadwal berhasil disinkronkan ke Cloud Firestore!');
-      } else {
-        setSyncToast('Gagal menyinkronkan data.');
-      }
-    } catch {
-      setSyncToast('Terjadi kesalahan koneksi saat sinkronisasi.');
-    } finally {
-      setIsSyncing(false);
-      setTimeout(() => setSyncToast(null), 4000);
-    }
-  };
 
   // Helper cek kecocokan pekan rotasi
   const isWeekMatching = (sWeek?: string): boolean => {
@@ -417,17 +396,6 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
             <span className="hidden sm:inline">{isCloudConnected ? 'Cloud Sync Aktif' : 'Lokal'}</span>
           </div>
 
-          <button
-            type="button"
-            onClick={handleForceSync}
-            disabled={isSyncing}
-            title="Sinkronkan rombel kelas dan jadwal KBM master ke Cloud Firestore"
-            className="flex items-center gap-1.5 px-3 py-1 bg-cyan-700 hover:bg-cyan-800 text-white rounded-lg text-xs font-semibold shadow-2xs transition-colors disabled:opacity-50"
-          >
-            <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Database'}</span>
-          </button>
-
           {/* Print Button */}
           <button
             type="button"
@@ -452,7 +420,7 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
         </div>
       </div>
 
-      {/* Sync Toast Notification */}
+      {/* Toast Notification */}
       {syncToast && (
         <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2 print:hidden">
           <div className="flex items-center gap-2">

@@ -281,6 +281,23 @@ export const getScheduleLessonStatus = (
 
 const STORAGE_KEY = 'simpati_smkn1tegalsari_v3';
 
+// Rekursif hapus properti undefined agar Firestore setDoc tidak pernah gagal
+function stripUndefined<T>(val: T): T {
+  if (Array.isArray(val)) {
+    return val.map((item) => stripUndefined(item)) as unknown as T;
+  }
+  if (val !== null && typeof val === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val as Record<string, any>)) {
+      if (v !== undefined) {
+        cleaned[k] = stripUndefined(v);
+      }
+    }
+    return cleaned as T;
+  }
+  return val;
+}
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -295,7 +312,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_TEACHERS;
+    return [];
   });
 
   const [subjects, setSubjects] = useState<Subject[]>(() => {
@@ -323,7 +340,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_SUBJECTS;
+    return [];
   });
 
   const [classes, setClasses] = useState<SchoolClass[]>(() => {
@@ -336,7 +353,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_CLASSES;
+    return [];
   });
 
   const [rooms, setRooms] = useState<Room[]>(() => {
@@ -349,7 +366,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_ROOMS;
+    return [];
   });
 
   const [departments, setDepartments] = useState<Department[]>(() => {
@@ -362,7 +379,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_DEPARTMENTS;
+    return [];
   });
 
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>(() => {
@@ -388,7 +405,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_SCHEDULE;
+    return [];
   });
 
   const [attendanceRecords, setAttendanceRecords] = useState<Record<string, AttendanceRecord>>(() => {
@@ -427,7 +444,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return [];
       }
     }
-    return INITIAL_JOURNALS;
+    return [];
   });
 
   const [clientId] = useState<string>(() => `client_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`);
@@ -477,38 +494,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveMenu('monitoring');
   };
 
+  const teachersRef = React.useRef<Teacher[]>(teachers);
+  const subjectsRef = React.useRef<Subject[]>(subjects);
+  const classesRef = React.useRef<SchoolClass[]>(classes);
+  const roomsRef = React.useRef<Room[]>(rooms);
+  const departmentsRef = React.useRef<Department[]>(departments);
+  const academicYearsRef = React.useRef<AcademicYear[]>(academicYears);
+  const schedulesRef = React.useRef<ScheduleItem[]>(schedules);
+  const attendanceRecordsRef = React.useRef<Record<string, AttendanceRecord>>(attendanceRecords);
+  const userAccountsRef = React.useRef<UserAccount[]>(userAccounts);
+  const journalsRef = React.useRef<TeachingJournal[]>(journals);
+  const localMutationVersionRef = React.useRef<number>(0);
+
+  const pendingServerPatchRef = React.useRef<Record<string, any>>({});
+  const pendingCloudPatchRef = React.useRef<Record<string, any>>({});
+  const flushScheduledRef = React.useRef<boolean>(false);
+  const lastLocalMutationAtRef = React.useRef<number>(0);
+
+  const scheduleSyncFlush = () => {
+    if (flushScheduledRef.current) return;
+    flushScheduledRef.current = true;
+    queueMicrotask(() => {
+      flushScheduledRef.current = false;
+      const serverPatch = pendingServerPatchRef.current;
+      const cloudPatch = pendingCloudPatchRef.current;
+      pendingServerPatchRef.current = {};
+      pendingCloudPatchRef.current = {};
+
+      const mutationTs = lastLocalMutationAtRef.current || Date.now();
+      const updatedByName = currentUser.name || 'Pengguna SIMPATI';
+
+      const serverKeys = Object.keys(serverPatch);
+      if (serverKeys.length > 0) {
+        const bodyPayload =
+          serverKeys.length === 1
+            ? {
+                key: serverKeys[0],
+                data: serverPatch[serverKeys[0]],
+                updatedBy: updatedByName,
+                clientId,
+              }
+            : {
+                fullState: serverPatch,
+                updatedBy: updatedByName,
+                clientId,
+              };
+
+        fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyPayload),
+        }).catch((err) => {
+          console.warn('[SIMPATI Sync] Gagal sinkronisasi data ke server:', err);
+        });
+      }
+
+      if (Object.keys(cloudPatch).length > 0) {
+        const sanitizedPatch = stripUndefined({
+          ...cloudPatch,
+          lastUpdated: mutationTs,
+          lastUpdatedBy: updatedByName,
+          lastUpdatedByClientId: clientId,
+        });
+        setDoc(
+          doc(db, 'simpati_data', 'main_store'),
+          sanitizedPatch,
+          { merge: true }
+        )
+          .then(() => {
+            setIsCloudConnected(true);
+          })
+          .catch((err) => {
+            console.warn('[SIMPATI Cloud] Gagal sinkronisasi data ke Firestore:', err);
+          });
+      }
+    });
+  };
+
   const syncToServer = async (key: string, data: any) => {
-    try {
-      await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key,
-          data,
-          updatedBy: currentUser.name || 'Pengguna SIMPATI',
-          clientId,
-        }),
-      });
-    } catch (err) {
-      console.warn('[SIMPATI Sync] Gagal sinkronisasi data ke server:', err);
+    if (key === 'fullState' && data && typeof data === 'object') {
+      pendingServerPatchRef.current = {
+        ...pendingServerPatchRef.current,
+        ...stripUndefined(data),
+      };
+    } else {
+      pendingServerPatchRef.current[key] = stripUndefined(data);
     }
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
   // Helper sinkronisasi global Firestore ke dokumen database cloud bersama
   const syncToCloud = async (patch: Record<string, any>) => {
-    try {
-      await setDoc(
-        doc(db, 'simpati_data', 'main_store'),
-        {
-          ...patch,
-          lastUpdated: Date.now(),
-          lastUpdatedBy: currentUser.name || 'Pengguna SIMPATI',
-        },
-        { merge: true }
-      );
-    } catch (err) {
-      console.warn('[SIMPATI Cloud] Gagal sinkronisasi data ke Firestore:', err);
-    }
+    pendingCloudPatchRef.current = {
+      ...pendingCloudPatchRef.current,
+      ...stripUndefined(patch),
+    };
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>('monitoring');
@@ -556,187 +639,232 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const activeAy = academicYears.find((ay) => ay.status === 'aktif') || academicYears[0];
   const semesterString = activeAy ? `${activeAy.name}` : 'Semester Ganjil · 2026/2027';
 
-  // Helper fungsi mutasi data: menyimpan langsung ke state, localStorage, server lokal, dan Cloud Firestore terpusat
+  // Helper fungsi mutasi data: menyimpan langsung ke ref, state, localStorage, server lokal, dan Cloud Firestore terpusat
   const updateTeachersAndSync = (updater: Teacher[] | ((prev: Teacher[]) => Teacher[])) => {
-    setTeachers((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('teachers', next);
-      syncToCloud({ teachers: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(teachersRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    teachersRef.current = next;
+    localMutationVersionRef.current += 1;
+    setTeachers(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('teachers', next);
+    syncToCloud({ teachers: next });
   };
 
   const updateSubjectsAndSync = (updater: Subject[] | ((prev: Subject[]) => Subject[])) => {
-    setSubjects((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('subjects', next);
-      syncToCloud({ subjects: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(subjectsRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    subjectsRef.current = next;
+    localMutationVersionRef.current += 1;
+    setSubjects(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('subjects', next);
+    syncToCloud({ subjects: next });
   };
 
   const updateClassesAndSync = (updater: SchoolClass[] | ((prev: SchoolClass[]) => SchoolClass[])) => {
-    setClasses((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('classes', next);
-      syncToCloud({ classes: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(classesRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    classesRef.current = next;
+    localMutationVersionRef.current += 1;
+    setClasses(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('classes', next);
+    syncToCloud({ classes: next });
   };
 
   const updateDepartmentsAndSync = (updater: Department[] | ((prev: Department[]) => Department[])) => {
-    setDepartments((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('departments', next);
-      syncToCloud({ departments: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(departmentsRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    departmentsRef.current = next;
+    localMutationVersionRef.current += 1;
+    setDepartments(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('departments', next);
+    syncToCloud({ departments: next });
   };
 
   const updateRoomsAndSync = (updater: Room[] | ((prev: Room[]) => Room[])) => {
-    setRooms((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('rooms', next);
-      syncToCloud({ rooms: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(roomsRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    roomsRef.current = next;
+    localMutationVersionRef.current += 1;
+    setRooms(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('rooms', next);
+    syncToCloud({ rooms: next });
   };
 
   const updateAcademicYearsAndSync = (updater: AcademicYear[] | ((prev: AcademicYear[]) => AcademicYear[])) => {
-    setAcademicYears((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('academicYears', next);
-      syncToCloud({ academicYears: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(academicYearsRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    academicYearsRef.current = next;
+    localMutationVersionRef.current += 1;
+    setAcademicYears(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('academicYears', next);
+    syncToCloud({ academicYears: next });
   };
 
   const updateSchedulesAndSync = (updater: ScheduleItem[] | ((prev: ScheduleItem[]) => ScheduleItem[])) => {
-    setSchedules((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(next));
-      } catch (e) {}
-      setTimeout(() => {
-        syncToServer('schedules', next);
-        syncToCloud({ schedules: next });
-      }, 0);
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(schedulesRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    schedulesRef.current = next;
+    localMutationVersionRef.current += 1;
+    setSchedules(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('schedules', next);
+    syncToCloud({ schedules: next });
   };
 
   const updateAttendanceRecordsAndSync = (updater: Record<string, AttendanceRecord> | ((prev: Record<string, AttendanceRecord>) => Record<string, AttendanceRecord>)) => {
-    setAttendanceRecords((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(next));
-      } catch (e) {}
-      setTimeout(() => {
-        syncToServer('attendanceRecords', next);
-        syncToCloud({ attendanceRecords: next });
-      }, 0);
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(attendanceRecordsRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    attendanceRecordsRef.current = next;
+    localMutationVersionRef.current += 1;
+    setAttendanceRecords(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('attendanceRecords', next);
+    syncToCloud({ attendanceRecords: next });
   };
 
   const updateUserAccountsAndSync = (updater: UserAccount[] | ((prev: UserAccount[]) => UserAccount[])) => {
-    setUserAccounts((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      const reconciled = ensureDefaultAccounts(next);
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled));
-      } catch (e) {}
-      syncToServer('userAccounts', reconciled);
-      syncToCloud({ userAccounts: reconciled });
-      return reconciled;
-    });
+    const rawNext = typeof updater === 'function' ? updater(userAccountsRef.current) : updater;
+    const reconciled = stripUndefined(ensureDefaultAccounts(rawNext));
+    userAccountsRef.current = reconciled;
+    localMutationVersionRef.current += 1;
+    setUserAccounts(reconciled);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled));
+    } catch (e) {}
+    syncToServer('userAccounts', reconciled);
+    syncToCloud({ userAccounts: reconciled });
   };
 
   const updateJournalsAndSync = (updater: TeachingJournal[] | ((prev: TeachingJournal[]) => TeachingJournal[])) => {
-    setJournals((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(next));
-      } catch (e) {}
-      syncToServer('journals', next);
-      syncToCloud({ journals: next });
-      return next;
-    });
+    const rawNext = typeof updater === 'function' ? updater(journalsRef.current) : updater;
+    const next = stripUndefined(rawNext);
+    journalsRef.current = next;
+    localMutationVersionRef.current += 1;
+    setJournals(next);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(next));
+    } catch (e) {}
+    syncToServer('journals', next);
+    syncToCloud({ journals: next });
+  };
+
+  const applyRemoteStore = (s: Record<string, any>) => {
+    if (Array.isArray(s.teachers)) {
+      teachersRef.current = s.teachers;
+      setTeachers(s.teachers);
+      try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {}
+    }
+    if (Array.isArray(s.subjects)) {
+      subjectsRef.current = s.subjects;
+      setSubjects(s.subjects);
+      try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {}
+    }
+    if (Array.isArray(s.classes)) {
+      classesRef.current = s.classes;
+      setClasses(s.classes);
+      try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {}
+    }
+    if (Array.isArray(s.departments)) {
+      departmentsRef.current = s.departments;
+      setDepartments(s.departments);
+      try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {}
+    }
+    if (Array.isArray(s.rooms)) {
+      roomsRef.current = s.rooms;
+      setRooms(s.rooms);
+      try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {}
+    }
+    if (Array.isArray(s.academicYears)) {
+      academicYearsRef.current = s.academicYears;
+      setAcademicYears(s.academicYears);
+      try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {}
+    }
+    if (Array.isArray(s.schedules)) {
+      schedulesRef.current = s.schedules;
+      setSchedules(s.schedules);
+      try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {}
+    }
+    if (s.attendanceRecords && typeof s.attendanceRecords === 'object') {
+      attendanceRecordsRef.current = s.attendanceRecords;
+      setAttendanceRecords(s.attendanceRecords);
+      try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {}
+    }
+    if (Array.isArray(s.userAccounts)) {
+      const reconciled = ensureDefaultAccounts(s.userAccounts);
+      userAccountsRef.current = reconciled;
+      setUserAccounts(reconciled);
+      try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
+    }
+    if (Array.isArray(s.journals)) {
+      journalsRef.current = s.journals;
+      setJournals(s.journals);
+      try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {}
+    }
+    if (s.activeWeekFilter) {
+      setActiveWeekFilterState(s.activeWeekFilter);
+      try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {}
+    }
   };
 
   // Fungsi sinkronisasi manual/otomatis langsung dari database cloud Firestore dan server terpusat
   const refreshFromServer = async () => {
-    // 1. Prioritaskan pengambilan dari Cloud Firestore (Database terpusat bersama)
-    try {
-      const snap = await getDoc(doc(db, 'simpati_data', 'main_store'));
-      if (snap.exists()) {
-        const s = snap.data();
-        if (Array.isArray(s.teachers)) { setTeachers(s.teachers); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {} }
-        if (Array.isArray(s.subjects)) { setSubjects(s.subjects); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {} }
-        if (Array.isArray(s.classes)) { setClasses(s.classes); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {} }
-        if (Array.isArray(s.departments)) { setDepartments(s.departments); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {} }
-        if (Array.isArray(s.rooms)) { setRooms(s.rooms); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {} }
-        if (Array.isArray(s.academicYears)) { setAcademicYears(s.academicYears); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {} }
-        if (Array.isArray(s.schedules)) { setSchedules(s.schedules); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {} }
-        if (s.attendanceRecords && typeof s.attendanceRecords === 'object') { setAttendanceRecords(s.attendanceRecords); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {} }
-        if (Array.isArray(s.userAccounts)) {
-          const reconciled = ensureDefaultAccounts(s.userAccounts);
-          setUserAccounts(reconciled);
-          try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
-        }
-        if (Array.isArray(s.journals)) { setJournals(s.journals); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {} }
-        if (s.activeWeekFilter) { setActiveWeekFilterState(s.activeWeekFilter); try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {} }
-        setIsCloudConnected(true);
-        setIsServerConnected(true);
-        return;
-      }
-    } catch (err) {
-      console.warn('[SIMPATI Cloud] Refresh via Firestore cloud fallback ke local server:', err);
+    const startVersion = localMutationVersionRef.current;
+    let cloudData: Record<string, any> | null = null;
+    let serverData: Record<string, any> | null = null;
+
+    const [cloudRes, serverRes] = await Promise.allSettled([
+      getDoc(doc(db, 'simpati_data', 'main_store')),
+      fetch('/api/state').then((r) => r.json()),
+    ]);
+
+    if (cloudRes.status === 'fulfilled' && cloudRes.value.exists()) {
+      cloudData = cloudRes.value.data();
+      setIsCloudConnected(true);
     }
 
-    // 2. Fallback ke endpoint server HTTP lokal jika Firestore sedang offline
-    try {
-      const res = await fetch('/api/state');
-      const json = await res.json();
-      if (json.success && json.data) {
-        const s = json.data;
-        if (Array.isArray(s.teachers)) { setTeachers(s.teachers); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {} }
-        if (Array.isArray(s.subjects)) { setSubjects(s.subjects); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {} }
-        if (Array.isArray(s.classes)) { setClasses(s.classes); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {} }
-        if (Array.isArray(s.departments)) { setDepartments(s.departments); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {} }
-        if (Array.isArray(s.rooms)) { setRooms(s.rooms); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {} }
-        if (Array.isArray(s.academicYears)) { setAcademicYears(s.academicYears); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {} }
-        if (Array.isArray(s.schedules)) { setSchedules(s.schedules); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {} }
-        if (s.attendanceRecords && typeof s.attendanceRecords === 'object') { setAttendanceRecords(s.attendanceRecords); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {} }
-        if (Array.isArray(s.userAccounts)) {
-          const reconciled = ensureDefaultAccounts(s.userAccounts);
-          setUserAccounts(reconciled);
-          try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
-        }
-        if (Array.isArray(s.journals)) { setJournals(s.journals); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {} }
-        if (s.activeWeekFilter) { setActiveWeekFilterState(s.activeWeekFilter); try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {} }
-        setIsServerConnected(true);
+    if (serverRes.status === 'fulfilled' && serverRes.value?.success && serverRes.value?.data) {
+      serverData = serverRes.value.data;
+      setIsServerConnected(true);
+    }
+
+    if (localMutationVersionRef.current !== startVersion) {
+      return;
+    }
+
+    const cloudTs = typeof cloudData?.lastUpdated === 'number' ? cloudData.lastUpdated : 0;
+    const serverTs = typeof serverData?.lastUpdated === 'number' ? serverData.lastUpdated : 0;
+
+    if (serverData && serverTs > cloudTs) {
+      applyRemoteStore(serverData);
+      if (cloudData !== null || serverTs > 0) {
+        syncToCloud(stripUndefined(serverData));
       }
-    } catch (err) {
-      console.warn('[SIMPATI] Server state awal tidak dapat diambil:', err);
+    } else if (cloudData) {
+      applyRemoteStore(cloudData);
+    } else if (serverData) {
+      applyRemoteStore(serverData);
     }
   };
 
@@ -797,61 +925,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (snapshot.exists()) {
           const s = snapshot.data();
           
-          // Inisialisasi awal ke Cloud Firestore hanya bila dokumen benar-benar belum diinisialisasi sama sekali
-          const isStoreBrandNew = !s.lastUpdated && !Array.isArray(s.classes) && !Array.isArray(s.teachers);
-          if (isStoreBrandNew) {
-            console.log('[SIMPATI Cloud] Inisialisasi master data awal ke Cloud Firestore...');
-            const mergedInit = {
-              teachers: SEED_TEACHERS,
-              subjects: SEED_SUBJECTS,
-              classes: SEED_CLASSES,
-              departments: SEED_DEPARTMENTS,
-              rooms: SEED_ROOMS,
-              academicYears: INITIAL_ACADEMIC_YEARS,
-              schedules: SEED_SCHEDULES,
-              attendanceRecords: {},
-              userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
-              journals: INITIAL_JOURNALS,
-              lastUpdated: Date.now(),
-              lastUpdatedBy: 'System Cloud Seed',
-            };
-            setDoc(doc(db, 'simpati_data', 'main_store'), mergedInit, { merge: true }).catch(() => {});
+          // Abaikan echo lokal atau ack in-flight yang lebih lama daripada mutasi lokal terbaru
+          if (s.lastUpdatedByClientId === clientId && snapshot.metadata.hasPendingWrites) {
+            return;
+          }
+          if (
+            typeof s.lastUpdated === 'number' &&
+            lastLocalMutationAtRef.current > 0 &&
+            s.lastUpdated < lastLocalMutationAtRef.current
+          ) {
+            return;
           }
 
-          if (Array.isArray(s.teachers)) { setTeachers(s.teachers); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {} }
-          if (Array.isArray(s.subjects)) { setSubjects(s.subjects); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {} }
-          if (Array.isArray(s.classes)) { setClasses(s.classes); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {} }
-          if (Array.isArray(s.departments)) { setDepartments(s.departments); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {} }
-          if (Array.isArray(s.rooms)) { setRooms(s.rooms); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {} }
-          if (Array.isArray(s.academicYears)) { setAcademicYears(s.academicYears); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {} }
-          if (Array.isArray(s.schedules)) { setSchedules(s.schedules); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {} }
-          if (s.attendanceRecords && typeof s.attendanceRecords === 'object') { setAttendanceRecords(s.attendanceRecords); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(s.attendanceRecords)); } catch (e) {} }
-          if (Array.isArray(s.userAccounts)) {
-            const reconciled = ensureDefaultAccounts(s.userAccounts);
-            setUserAccounts(reconciled);
-            try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
+          // Inisialisasi awal ke Cloud Firestore dengan struktur bersih jika dokumen belum pernah diinisialisasi
+          const isStoreBrandNew = !s.lastUpdated && !Array.isArray(s.classes) && !Array.isArray(s.teachers);
+          if (isStoreBrandNew) {
+            console.log('[SIMPATI Cloud] Inisialisasi struktur bersih awal ke Cloud Firestore...');
+            const cleanInit = {
+              teachers: [],
+              subjects: [],
+              classes: [],
+              departments: [],
+              rooms: [],
+              academicYears: INITIAL_ACADEMIC_YEARS,
+              schedules: [],
+              attendanceRecords: {},
+              userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
+              journals: [],
+              activeWeekFilter: 'AUTO',
+              lastUpdated: Date.now(),
+              lastUpdatedBy: 'System Fresh Init',
+            };
+            setDoc(doc(db, 'simpati_data', 'main_store'), cleanInit).catch(() => {});
           }
-          if (Array.isArray(s.journals)) { setJournals(s.journals); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {} }
-          if (s.activeWeekFilter) { setActiveWeekFilterState(s.activeWeekFilter); try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {} }
+
+          applyRemoteStore(s);
           setIsCloudConnected(true);
           setIsServerConnected(true);
         } else {
-          // Inisialisasi awal database cloud jika belum ada
+          // Inisialisasi awal database cloud bersih jika belum ada
           try {
             const initialStore = {
-              teachers: SEED_TEACHERS,
-              subjects: SEED_SUBJECTS,
-              classes: SEED_CLASSES,
-              departments: SEED_DEPARTMENTS,
-              rooms: SEED_ROOMS,
+              teachers: [],
+              subjects: [],
+              classes: [],
+              departments: [],
+              rooms: [],
               academicYears: INITIAL_ACADEMIC_YEARS,
-              schedules: SEED_SCHEDULES,
+              schedules: [],
               attendanceRecords: {},
               userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
-              journals: INITIAL_JOURNALS,
-              activeWeekFilter: 'ACTIVE',
+              journals: [],
+              activeWeekFilter: 'AUTO',
               lastUpdated: Date.now(),
-              lastUpdatedBy: 'System Cloud Seed',
+              lastUpdatedBy: 'System Fresh Init',
             };
             await setDoc(doc(db, 'simpati_data', 'main_store'), initialStore);
             setIsCloudConnected(true);
@@ -882,20 +1009,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const { key, data, originClientId } = payloadData.payload;
             if (originClientId === clientId) return;
 
-            if (key === 'teachers' && Array.isArray(data)) { setTeachers(data); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'subjects' && Array.isArray(data)) { setSubjects(data); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'classes' && Array.isArray(data)) { setClasses(data); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'departments' && Array.isArray(data)) { setDepartments(data); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'rooms' && Array.isArray(data)) { setRooms(data); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'academicYears' && Array.isArray(data)) { setAcademicYears(data); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'schedules' && Array.isArray(data)) { setSchedules(data); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'attendanceRecords' && typeof data === 'object' && data !== null) { setAttendanceRecords(data); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data)); } catch (e) {} }
+            if (!key && data && typeof data === 'object') {
+              applyRemoteStore(data);
+            } else if (key === 'teachers' && Array.isArray(data)) { teachersRef.current = data; setTeachers(data); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'subjects' && Array.isArray(data)) { subjectsRef.current = data; setSubjects(data); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'classes' && Array.isArray(data)) { classesRef.current = data; setClasses(data); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'departments' && Array.isArray(data)) { departmentsRef.current = data; setDepartments(data); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'rooms' && Array.isArray(data)) { roomsRef.current = data; setRooms(data); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'academicYears' && Array.isArray(data)) { academicYearsRef.current = data; setAcademicYears(data); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'schedules' && Array.isArray(data)) { schedulesRef.current = data; setSchedules(data); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'attendanceRecords' && typeof data === 'object' && data !== null) { attendanceRecordsRef.current = data; setAttendanceRecords(data); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data)); } catch (e) {} }
             else if (key === 'userAccounts' && Array.isArray(data)) {
               const reconciled = ensureDefaultAccounts(data);
+              userAccountsRef.current = reconciled;
               setUserAccounts(reconciled);
               try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
             }
-            else if (key === 'journals' && Array.isArray(data)) { setJournals(data); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'journals' && Array.isArray(data)) { journalsRef.current = data; setJournals(data); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data)); } catch (e) {} }
             else if (key === 'activeWeekFilter' && typeof data === 'string') { setActiveWeekFilterState(data as any); try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, data); } catch (e) {} }
           }
         } catch (e) {
@@ -1557,7 +1687,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addSubject = (subject: Subject) => updateSubjectsAndSync((prev) => [...prev, subject]);
   const updateSubject = (subject: Subject) => {
-    const oldSub = subjects.find((s) => s.id === subject.id);
+    const oldSub = subjectsRef.current.find((s) => s.id === subject.id);
     updateSubjectsAndSync((prev) => prev.map((s) => (s.id === subject.id ? subject : s)));
     // Sinkronkan ke jadwal pelajaran
     updateSchedulesAndSync((prev) =>
@@ -1580,7 +1710,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteSubject = (id: string) => {
-    const oldSub = subjects.find((s) => s.id === id);
+    const oldSub = subjectsRef.current.find((s) => s.id === id);
     updateSubjectsAndSync((prev) => prev.filter((s) => s.id !== id));
     if (oldSub) {
       updateTeachersAndSync((prev) =>
@@ -1593,7 +1723,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkDeleteSubjects = (ids: string[]) => {
     const idSet = new Set(ids);
-    const removedSubjects = subjects.filter((s) => idSet.has(s.id));
+    const removedSubjects = subjectsRef.current.filter((s) => idSet.has(s.id));
     const removedNames = new Set(removedSubjects.map((s) => s.name.toLowerCase()));
     updateSubjectsAndSync((prev) => prev.filter((s) => !idSet.has(s.id)));
     if (removedNames.size > 0) {
@@ -1616,12 +1746,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addDepartment = (dept: Department) => updateDepartmentsAndSync((prev) => [...prev, dept]);
   const updateDepartment = (dept: Department) => {
-    let oldCode = '';
-    updateDepartmentsAndSync((prev) => {
-      const existing = prev.find((d) => d.id === dept.id);
-      if (existing) oldCode = existing.code;
-      return prev.map((d) => (d.id === dept.id ? dept : d));
-    });
+    const existing = departmentsRef.current.find((d) => d.id === dept.id);
+    const oldCode = existing?.code || '';
+    updateDepartmentsAndSync((prev) => prev.map((d) => (d.id === dept.id ? dept : d)));
 
     if (oldCode && oldCode.toUpperCase() !== dept.code.toUpperCase()) {
       const oldUpper = oldCode.toUpperCase();
@@ -1644,12 +1771,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteDepartment = (id: string) => {
-    let deletedCode = '';
-    updateDepartmentsAndSync((prev) => {
-      const target = prev.find((d) => d.id === id);
-      if (target) deletedCode = target.code;
-      return prev.filter((d) => d.id !== id);
-    });
+    const target = departmentsRef.current.find((d) => d.id === id);
+    const deletedCode = target?.code || '';
+    updateDepartmentsAndSync((prev) => prev.filter((d) => d.id !== id));
 
     if (deletedCode) {
       const upper = deletedCode.toUpperCase();
@@ -1672,7 +1796,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkDeleteDepartments = (ids: string[]) => {
     const idSet = new Set(ids);
-    const deletedCodes = departments
+    const deletedCodes = departmentsRef.current
       .filter((d) => idSet.has(d.id))
       .map((d) => d.code.toUpperCase());
 
@@ -1699,14 +1823,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkUpdateDepartments = (ids: string[], updates: Partial<Department>) => {
     const idSet = new Set(ids);
+    const oldCodes = departmentsRef.current
+      .filter((d) => idSet.has(d.id))
+      .map((d) => d.code.toUpperCase());
     updateDepartmentsAndSync((prev) =>
       prev.map((d) => (idSet.has(d.id) ? { ...d, ...updates } : d))
     );
     if (updates.code) {
       const newCode = updates.code.toUpperCase();
-      const oldCodes = departments
-        .filter((d) => idSet.has(d.id))
-        .map((d) => d.code.toUpperCase());
       const oldSet = new Set(oldCodes);
       updateClassesAndSync((prev) =>
         prev.map((c) =>
@@ -1738,7 +1862,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
   const deleteClass = (id: string) => {
-    const targetClass = classes.find((c) => c.id === id);
+    const targetClass = classesRef.current.find((c) => c.id === id);
     updateClassesAndSync((prev) => prev.filter((c) => c.id !== id));
     updateSchedulesAndSync((prev) =>
       prev.filter((s) => s.classId !== id && (!targetClass || s.className !== targetClass.name))
@@ -1747,7 +1871,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkDeleteClasses = (ids: string[]) => {
     const idSet = new Set(ids);
-    const targetClasses = classes.filter((c) => idSet.has(c.id));
+    const targetClasses = classesRef.current.filter((c) => idSet.has(c.id));
     const targetClassNames = new Set(targetClasses.map((c) => c.name));
     updateClassesAndSync((prev) => prev.filter((c) => !idSet.has(c.id)));
     updateSchedulesAndSync((prev) =>
@@ -1757,7 +1881,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const bulkUpdateClasses = (ids: string[], updates: Partial<SchoolClass>) => {
     const idSet = new Set(ids);
-    const targetClasses = classes.filter((c) => idSet.has(c.id));
+    const targetClasses = classesRef.current.filter((c) => idSet.has(c.id));
     const targetClassNames = new Set(targetClasses.map((c) => c.name));
     updateClassesAndSync((prev) =>
       prev.map((c) => (idSet.has(c.id) ? { ...c, ...updates } : c))
@@ -1885,18 +2009,72 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateSchedulesAndSync([]);
       updateAttendanceRecordsAndSync({});
     } else if (tableKey === 'semua') {
-      updateTeachersAndSync([]);
-      updateSubjectsAndSync([]);
-      updateClassesAndSync([]);
-      updateRoomsAndSync([]);
-      updateDepartmentsAndSync([]);
-      updateAcademicYearsAndSync((prev) => prev.filter((ay) => ay.status === 'aktif'));
-      updateSchedulesAndSync([]);
-      updateAttendanceRecordsAndSync({});
-      updateJournalsAndSync([]);
-      updateUserAccountsAndSync((prev) =>
-        prev.filter((a) => a.role === 'admin' || a.role === 'pimpinan' || !a.teacherId)
+      const preservedAccounts = stripUndefined(
+        ensureDefaultAccounts(
+          userAccountsRef.current.filter((a) => a.role === 'admin' || a.role === 'pimpinan' || !a.teacherId)
+        )
       );
+      const cleanPayload = {
+        teachers: [],
+        subjects: [],
+        classes: [],
+        departments: [],
+        rooms: [],
+        academicYears: INITIAL_ACADEMIC_YEARS,
+        schedules: [],
+        attendanceRecords: {},
+        journals: [],
+        userAccounts: preservedAccounts,
+        activeWeekFilter: 'AUTO',
+        lastUpdated: Date.now(),
+        lastUpdatedBy: currentUser.name || 'Admin SIMPATI',
+      };
+
+      teachersRef.current = [];
+      subjectsRef.current = [];
+      classesRef.current = [];
+      roomsRef.current = [];
+      departmentsRef.current = [];
+      academicYearsRef.current = INITIAL_ACADEMIC_YEARS;
+      schedulesRef.current = [];
+      attendanceRecordsRef.current = {};
+      journalsRef.current = [];
+      userAccountsRef.current = preservedAccounts;
+      localMutationVersionRef.current += 1;
+
+      setTeachers([]);
+      setSubjects([]);
+      setClasses([]);
+      setRooms([]);
+      setDepartments([]);
+      setAcademicYears(INITIAL_ACADEMIC_YEARS);
+      setSchedules([]);
+      setAttendanceRecords({});
+      setJournals([]);
+      setUserAccounts(preservedAccounts);
+
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(INITIAL_ACADEMIC_YEARS));
+        localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify({}));
+        localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify([]));
+        localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(preservedAccounts));
+      } catch (e) {}
+
+      fetch('/api/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'empty', clientId, updatedBy: currentUser.name || 'Admin' }),
+      }).catch(() => {});
+
+      setDoc(doc(db, 'simpati_data', 'main_store'), cleanPayload).catch((err) => {
+        console.warn('[SIMPATI Cloud] Gagal membersihkan database cloud:', err);
+      });
     }
   };
   const importSchedules = (items: ScheduleItem[]) => updateSchedulesAndSync((prev) => [...prev, ...items]);
@@ -1922,25 +2100,72 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetAllData = async () => {
+    const freshAccounts = stripUndefined(ensureDefaultAccounts(INITIAL_USER_ACCOUNTS));
+    const freshPayload = {
+      teachers: [],
+      subjects: [],
+      classes: [],
+      departments: [],
+      rooms: [],
+      academicYears: INITIAL_ACADEMIC_YEARS,
+      schedules: [],
+      attendanceRecords: {},
+      journals: [],
+      userAccounts: freshAccounts,
+      activeWeekFilter: 'AUTO',
+      lastUpdated: Date.now(),
+      lastUpdatedBy: currentUser.name || 'Admin',
+    };
+
     try {
       await fetch('/api/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'seed', clientId, updatedBy: currentUser.name || 'Admin' }),
+        body: JSON.stringify({ type: 'fresh', clientId, updatedBy: currentUser.name || 'Admin' }),
       });
     } catch (e) {}
-    updateTeachersAndSync(INITIAL_TEACHERS);
-    updateSubjectsAndSync(INITIAL_SUBJECTS);
-    updateClassesAndSync(INITIAL_CLASSES);
-    updateRoomsAndSync(INITIAL_ROOMS);
-    updateDepartmentsAndSync(INITIAL_DEPARTMENTS);
-    updateAcademicYearsAndSync(INITIAL_ACADEMIC_YEARS);
-    updateSchedulesAndSync(INITIAL_SCHEDULE);
-    updateAttendanceRecordsAndSync({});
-    updateJournalsAndSync(INITIAL_JOURNALS);
-    updateUserAccountsAndSync(INITIAL_USER_ACCOUNTS);
+
+    teachersRef.current = [];
+    subjectsRef.current = [];
+    classesRef.current = [];
+    roomsRef.current = [];
+    departmentsRef.current = [];
+    academicYearsRef.current = INITIAL_ACADEMIC_YEARS;
+    schedulesRef.current = [];
+    attendanceRecordsRef.current = {};
+    journalsRef.current = [];
+    userAccountsRef.current = freshAccounts;
+    localMutationVersionRef.current += 1;
+
+    setTeachers([]);
+    setSubjects([]);
+    setClasses([]);
+    setRooms([]);
+    setDepartments([]);
+    setAcademicYears(INITIAL_ACADEMIC_YEARS);
+    setSchedules([]);
+    setAttendanceRecords({});
+    setJournals([]);
+    setUserAccounts(freshAccounts);
     setCurrentPeriod(1);
     setIsSimulatedTime(false);
+
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(INITIAL_ACADEMIC_YEARS));
+      localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify({}));
+      localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify([]));
+      localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(freshAccounts));
+    } catch (e) {}
+
+    try {
+      await setDoc(doc(db, 'simpati_data', 'main_store'), freshPayload);
+    } catch (e) {}
   };
 
   // Helper status jadwal di dalam provider

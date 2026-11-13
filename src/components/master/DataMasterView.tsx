@@ -484,11 +484,42 @@ export const DataMasterView: React.FC = () => {
   const [schRoomId, setSchRoomId] = useState(rooms[0]?.id || '');
   const [schWeekType, setSchWeekType] = useState<ScheduleWeekType>('P10_PROD_P11_NORM');
 
+  // Pastikan default dropdown selalu sinkron saat data master baru ditambahkan/diubah
+  useEffect(() => {
+    if (departments.length > 0 && !departments.some((d) => d.code === cDept)) {
+      setCDept(departments[0].code);
+    }
+  }, [departments, cDept]);
+
+  useEffect(() => {
+    if (classes.length > 0 && !classes.some((c) => c.id === schClassId)) {
+      setSchClassId(classes[0].id);
+    }
+  }, [classes, schClassId]);
+
+  useEffect(() => {
+    if (subjects.length > 0 && !subjects.some((s) => s.id === schSubjectId)) {
+      setSchSubjectId(subjects[0].id);
+    }
+  }, [subjects, schSubjectId]);
+
+  useEffect(() => {
+    if (teachers.length > 0 && !teachers.some((t) => t.id === schTeacherId)) {
+      setSchTeacherId(teachers[0].id);
+    }
+  }, [teachers, schTeacherId]);
+
+  useEffect(() => {
+    if (rooms.length > 0 && !rooms.some((r) => r.id === schRoomId)) {
+      setSchRoomId(rooms[0].id);
+    }
+  }, [rooms, schRoomId]);
+
   // Handlers for Manual Add
   const handleSaveTeacher = (e: React.FormEvent) => {
     e.preventDefault();
     if (!tName) return;
-    const selectedMapel = tTitle || subjects[0]?.name || 'BAHASA INGGRIS';
+    const selectedMapel = tTitle || subjects[0]?.name || 'Belum Ditentukan';
     const newT: Teacher = {
       id: `t-${Date.now()}`,
       code: tCode || `G${teachers.length + 1}`,
@@ -504,12 +535,14 @@ export const DataMasterView: React.FC = () => {
     setTName('');
     setTTitle('');
     setIsAddTeacherOpen(false);
+    setToastNotification(`Data Guru "${newT.name}" berhasil disimpan ke database!`);
   };
 
   const handleUpdateTeacher = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTeacher) return;
     updateTeacher(editingTeacher);
+    setToastNotification(`Perubahan Data Guru "${editingTeacher.name}" berhasil disimpan ke database!`);
     setEditingTeacher(null);
   };
 
@@ -528,12 +561,14 @@ export const DataMasterView: React.FC = () => {
     setSName('');
     setSJp(4);
     setIsAddSubjectOpen(false);
+    setToastNotification(`Mata Pelajaran "${newSub.name}" berhasil disimpan ke database!`);
   };
 
   const handleUpdateSubject = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSubject) return;
     updateSubject(editingSubject);
+    setToastNotification(`Perubahan Mata Pelajaran "${editingSubject.name}" berhasil disimpan ke database!`);
     setEditingSubject(null);
   };
 
@@ -551,12 +586,14 @@ export const DataMasterView: React.FC = () => {
     setDName('');
     setDDesc('');
     setIsAddDeptOpen(false);
+    setToastNotification(`Jurusan "${newDept.name}" berhasil disimpan ke database!`);
   };
 
   const handleUpdateDepartment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingDepartment) return;
     updateDepartment(editingDepartment);
+    setToastNotification(`Perubahan Jurusan "${editingDepartment.name}" berhasil disimpan ke database!`);
     setEditingDepartment(null);
   };
 
@@ -564,14 +601,17 @@ export const DataMasterView: React.FC = () => {
     e.preventDefault();
     if (!cCode || !cName) return;
     const teacherObj = teachers.find((t) => t.id === cHomeroom);
+    const resolvedDept = departments.some((d) => d.code === cDept)
+      ? cDept
+      : departments[0]?.code || cDept || 'UMUM';
     const newCls: SchoolClass = {
       id: `cl-${Date.now()}`,
       code: cCode,
       name: cName,
       grade: cGrade,
-      department: cDept,
-      homeroomTeacherId: cHomeroom || undefined,
-      homeroomTeacherName: teacherObj ? teacherObj.name : undefined,
+      department: resolvedDept,
+      ...(cHomeroom ? { homeroomTeacherId: cHomeroom } : {}),
+      ...(teacherObj ? { homeroomTeacherName: teacherObj.name } : {}),
       totalStudents: 36,
     };
     addClass(newCls);
@@ -579,6 +619,7 @@ export const DataMasterView: React.FC = () => {
     setCName('');
     setCHomeroom('');
     setIsAddClassOpen(false);
+    setToastNotification(`Kelas "${newCls.name}" berhasil disimpan ke database!`);
   };
 
   const handleUpdateClass = (e: React.FormEvent) => {
@@ -587,8 +628,14 @@ export const DataMasterView: React.FC = () => {
     const teacherObj = teachers.find((t) => t.id === editingClass.homeroomTeacherId);
     updateClass({
       ...editingClass,
-      homeroomTeacherName: teacherObj ? teacherObj.name : editingClass.homeroomTeacherName,
+      homeroomTeacherId: editingClass.homeroomTeacherId || undefined,
+      homeroomTeacherName: teacherObj
+        ? teacherObj.name
+        : editingClass.homeroomTeacherId
+        ? editingClass.homeroomTeacherName
+        : undefined,
     });
+    setToastNotification(`Perubahan Kelas "${editingClass.name}" berhasil disimpan ke database!`);
     setEditingClass(null);
   };
 
@@ -607,12 +654,14 @@ export const DataMasterView: React.FC = () => {
     setRName('');
     setRBuilding('');
     setIsAddRoomOpen(false);
+    setToastNotification(`Ruangan "${newRm.name}" berhasil disimpan ke database!`);
   };
 
   const handleUpdateRoom = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRoom) return;
     updateRoom(editingRoom);
+    setToastNotification(`Perubahan Ruangan "${editingRoom.name}" berhasil disimpan ke database!`);
     setEditingRoom(null);
   };
 
@@ -631,12 +680,14 @@ export const DataMasterView: React.FC = () => {
     setAyStartDate('');
     setAyEndDate('');
     setIsAddAyOpen(false);
+    setToastNotification(`Tahun Pelajaran "${newAy.name}" berhasil disimpan ke database!`);
   };
 
   const handleUpdateAcademicYear = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAcademicYear) return;
     updateAcademicYear(editingAcademicYear);
+    setToastNotification(`Perubahan Tahun Pelajaran "${editingAcademicYear.name}" berhasil disimpan ke database!`);
     setEditingAcademicYear(null);
   };
 
@@ -666,12 +717,12 @@ export const DataMasterView: React.FC = () => {
       endTime,
       teacherId: selTeacher ? selTeacher.id : 't-none',
       teacherName: selTeacher ? selTeacher.name : 'Guru Pengajar',
-      teacherCode: selTeacher?.code,
+      ...(selTeacher?.code ? { teacherCode: selTeacher.code } : {}),
       subjectCode: selSub ? selSub.code : 'MPL',
       subjectName: selSub ? selSub.name : 'Mata Pelajaran',
       classId: selClass ? selClass.id : 'cl-1',
       className: selClass ? selClass.name : 'Kelas',
-      department: selClass ? selClass.department : 'TKJ',
+      department: selClass ? selClass.department : 'UMUM',
       roomName: selRoom ? selRoom.name : 'Ruang Teori',
       roomType: selRoom ? selRoom.type : 'Teori',
       weekType: schWeekType,
@@ -679,6 +730,7 @@ export const DataMasterView: React.FC = () => {
 
     addSchedule(newItem);
     setIsAddScheduleOpen(false);
+    setToastNotification(`Jadwal "${newItem.subjectName} (${newItem.className})" berhasil disimpan ke database!`);
   };
 
   const handleUpdateSchedule = (e: React.FormEvent) => {
@@ -714,6 +766,7 @@ export const DataMasterView: React.FC = () => {
     };
 
     updateSchedule(updated);
+    setToastNotification(`Perubahan Jadwal "${updated.subjectName} (${updated.className})" berhasil disimpan ke database!`);
     setEditingSchedule(null);
   };
 
@@ -846,14 +899,15 @@ export const DataMasterView: React.FC = () => {
     const list: SchoolClass[] = parsed.map((p, i) => {
       const teacherObj = teachers.find((t) => t.name.toLowerCase().includes((p.walikelas || '').toLowerCase()));
       const gradeNum = p.tingkat?.includes('10') ? 10 : p.tingkat?.includes('12') ? 12 : 11;
+      const homeroomName = teacherObj ? teacherObj.name : p.walikelas || '';
       return {
         id: `cl-imp-${Date.now()}-${i}`,
         code: p.kode || `KL-${i + 1}`,
         name: p.nama || `Kelas ${i + 1}`,
         grade: gradeNum as 10 | 11 | 12,
-        department: p.jurusan || departments[0]?.code || 'TKJ',
-        homeroomTeacherId: teacherObj?.id,
-        homeroomTeacherName: teacherObj ? teacherObj.name : p.walikelas || undefined,
+        department: p.jurusan || departments[0]?.code || 'UMUM',
+        ...(teacherObj?.id ? { homeroomTeacherId: teacherObj.id } : {}),
+        ...(homeroomName ? { homeroomTeacherName: homeroomName } : {}),
         totalStudents: 36,
       };
     });
@@ -2329,12 +2383,11 @@ export const DataMasterView: React.FC = () => {
                   Nama Mapel <span className="text-cyan-700 font-semibold">(Sinkron dengan Menu Data Mapel)</span>
                 </label>
                 <select
-                  required
                   value={tTitle}
                   onChange={(e) => setTTitle(e.target.value)}
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 font-bold bg-white"
                 >
-                  <option value="">-- Pilih Mata Pelajaran --</option>
+                  <option value="">-- Pilih Mata Pelajaran (Opsional) --</option>
                   {subjects.map((sub) => (
                     <option key={sub.id} value={sub.name}>
                       [{sub.code}] {sub.name} ({sub.category} - {sub.jp} JP)
@@ -2546,6 +2599,9 @@ export const DataMasterView: React.FC = () => {
                   onChange={(e) => setCDept(e.target.value)}
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
                 >
+                  {departments.length === 0 && (
+                    <option value="UMUM">UMUM (Belum ada Jurusan)</option>
+                  )}
                   {departments.map((d) => (
                     <option key={d.id} value={d.code}>
                       {d.code} - {d.name}
@@ -3001,6 +3057,9 @@ export const DataMasterView: React.FC = () => {
                   onChange={(e) => setEditingClass({ ...editingClass, department: e.target.value })}
                   className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-cyan-500"
                 >
+                  {editingClass.department && !departments.some((d) => d.code === editingClass.department) && (
+                    <option value={editingClass.department}>{editingClass.department}</option>
+                  )}
                   {departments.map((d) => (
                     <option key={d.id} value={d.code}>
                       {d.code} - {d.name}

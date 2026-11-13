@@ -4,16 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  INITIAL_TEACHERS,
-  INITIAL_SUBJECTS,
-  INITIAL_CLASSES,
-  INITIAL_DEPARTMENTS,
-  INITIAL_ROOMS,
   INITIAL_ACADEMIC_YEARS,
-  INITIAL_SCHEDULE,
-  INITIAL_ATTENDANCE_RECORDS,
   INITIAL_USER_ACCOUNTS,
-  INITIAL_JOURNALS,
   ensureDefaultAccounts,
 } from './src/data/initialData';
 
@@ -29,20 +21,20 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Inisialisasi struktur data terpusat jika file belum ada
+// Inisialisasi struktur data bersih (seperti baru) jika file belum ada
 function getInitialStore() {
   return {
-    teachers: INITIAL_TEACHERS,
-    subjects: INITIAL_SUBJECTS,
-    classes: INITIAL_CLASSES,
-    departments: INITIAL_DEPARTMENTS,
-    rooms: INITIAL_ROOMS,
+    teachers: [],
+    subjects: [],
+    classes: [],
+    departments: [],
+    rooms: [],
     academicYears: INITIAL_ACADEMIC_YEARS,
-    schedules: INITIAL_SCHEDULE,
-    attendanceRecords: INITIAL_ATTENDANCE_RECORDS,
+    schedules: [],
+    attendanceRecords: {},
     userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
-    journals: INITIAL_JOURNALS,
-    activeWeekFilter: 'ACTIVE',
+    journals: [],
+    activeWeekFilter: 'AUTO',
     lastUpdated: Date.now(),
     lastUpdatedBy: 'System',
   };
@@ -57,18 +49,18 @@ function loadStore() {
       inMemoryStore = JSON.parse(raw);
       if (!inMemoryStore || typeof inMemoryStore !== 'object') {
         inMemoryStore = getInitialStore();
+        saveStore();
       } else {
         inMemoryStore.userAccounts = ensureDefaultAccounts(inMemoryStore.userAccounts || INITIAL_USER_ACCOUNTS);
-        // Jika server data belum pernah diinisialisasi
-        if (!Array.isArray(inMemoryStore.classes) && !inMemoryStore.lastUpdated) {
-          inMemoryStore.classes = INITIAL_CLASSES;
-          inMemoryStore.departments = INITIAL_DEPARTMENTS;
-          inMemoryStore.teachers = INITIAL_TEACHERS;
-          inMemoryStore.subjects = INITIAL_SUBJECTS;
-          inMemoryStore.rooms = INITIAL_ROOMS;
-          inMemoryStore.schedules = INITIAL_SCHEDULE;
-          saveStore();
-        }
+        if (!Array.isArray(inMemoryStore.teachers)) inMemoryStore.teachers = [];
+        if (!Array.isArray(inMemoryStore.subjects)) inMemoryStore.subjects = [];
+        if (!Array.isArray(inMemoryStore.classes)) inMemoryStore.classes = [];
+        if (!Array.isArray(inMemoryStore.departments)) inMemoryStore.departments = [];
+        if (!Array.isArray(inMemoryStore.rooms)) inMemoryStore.rooms = [];
+        if (!Array.isArray(inMemoryStore.academicYears)) inMemoryStore.academicYears = INITIAL_ACADEMIC_YEARS;
+        if (!Array.isArray(inMemoryStore.schedules)) inMemoryStore.schedules = [];
+        if (!inMemoryStore.attendanceRecords || typeof inMemoryStore.attendanceRecords !== 'object') inMemoryStore.attendanceRecords = {};
+        if (!Array.isArray(inMemoryStore.journals)) inMemoryStore.journals = [];
       }
     } else {
       inMemoryStore = getInitialStore();
@@ -196,7 +188,7 @@ async function startServer() {
           classes: [],
           departments: [],
           rooms: [],
-          academicYears: [],
+          academicYears: INITIAL_ACADEMIC_YEARS,
           schedules: [],
           attendanceRecords: {},
           journals: [],
@@ -205,7 +197,7 @@ async function startServer() {
               (u: any) => u.role === 'admin' || u.role === 'pimpinan'
             )
           ),
-          activeWeekFilter: 'ACTIVE',
+          activeWeekFilter: 'AUTO',
           lastUpdated: Date.now(),
           lastUpdatedBy: updatedBy || 'Admin',
         };

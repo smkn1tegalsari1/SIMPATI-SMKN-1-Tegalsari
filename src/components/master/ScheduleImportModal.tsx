@@ -339,7 +339,7 @@ export const ScheduleImportModal: React.FC<ScheduleImportModalProps> = ({
           : guruCodeCol
           ? `Guru (${guruCodeCol})`
           : 'Guru Pembina / Wali Kelas',
-        teacherCode: guruCodeCol || undefined,
+        ...(guruCodeCol ? { teacherCode: guruCodeCol } : {}),
         subjectCode: matchedSubject ? matchedSubject.code : 'MPL',
         subjectName: cleanSubjectName,
         classId: targetClassObj?.id || 'cl-1',
