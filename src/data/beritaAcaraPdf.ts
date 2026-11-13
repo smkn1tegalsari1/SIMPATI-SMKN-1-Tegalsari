@@ -7,6 +7,7 @@ import {
   TeacherComplianceStatus,
   TeacherJournalComplianceRow,
 } from './journalCompliance';
+import { ClassEmptyScheduleRow, EmptySlotStatus } from './emptyScheduleAudit';
 
 export interface GeneratedPdfResult {
   doc: jsPDF;
@@ -612,6 +613,214 @@ export const buildTeachingJournalPdf = (
     filename: `jurnal_mengajar_${params.todayISO}.pdf`,
     title: 'Rekapitulasi Jurnal Mengajar Guru',
     rowCount: params.journals.length,
+  };
+};
+
+export interface EmptySchedulePdfParams {
+  rows: ClassEmptyScheduleRow[];
+  granularity: JournalReportGranularity;
+  periodLabel: string;
+  evaluatedSchoolDaysCount: number;
+  semesterString: string;
+  rotationLabel: string;
+  currentDateOnlyString: string;
+  currentDateTimeLabel: string;
+  todayISO: string;
+  classesWithEmptyCount: number;
+  totalEmptySlots: number;
+  statusFilterLabel: string;
+}
+
+const EMPTY_STATUS_LABEL_MAP: Record<EmptySlotStatus, string> = {
+  kosong_semua: 'Kosong Semua',
+  ada_kosong: 'Ada Jam Kosong',
+  lengkap: 'Terisi Penuh',
+};
+
+export const buildEmptyScheduleBeritaAcaraPdf = (
+  params: EmptySchedulePdfParams
+): GeneratedPdfResult => {
+  const doc = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = drawSchoolLetterhead(doc);
+
+  const granularityLabel =
+    params.granularity === 'daily'
+      ? 'HARIAN'
+      : params.granularity === 'weekly'
+      ? 'MINGGUAN'
+      : 'BULANAN';
+
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(
+    `BERITA ACARA & LAPORAN JADWAL PELAJARAN KOSONG / BELUM DIISI GURU (${granularityLabel})`,
+    14,
+    y
+  );
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    `Periode: ${params.periodLabel}  |  Hari Belajar Dievaluasi: ${params.evaluatedSchoolDaysCount} hari  |  Filter Status: ${params.statusFilterLabel}`,
+    14,
+    y + 4.8
+  );
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(params.semesterString, pageWidth - 14, y, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(
+    `Rotasi: ${params.rotationLabel}  |  ${params.classesWithEmptyCount} kelas ada jam kosong (${params.totalEmptySlots} slot kosong)`,
+    pageWidth - 14,
+    y + 4.8,
+    { align: 'right' }
+  );
+
+  y += 9;
+
+  if (params.rows.length === 0) {
+    doc.setDrawColor(203, 213, 225);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, y, pageWidth - 28, 22, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(
+      'Tidak ada jadwal pelajaran kosong pada filter dan periode yang dipilih.',
+      pageWidth / 2,
+      y + 10,
+      { align: 'center' }
+    );
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text(
+      `Seluruh slot jam KBM pada periode ${params.periodLabel} berstatus terisi penuh atau sesuai filter "${params.statusFilterLabel}".`,
+      pageWidth / 2,
+      y + 16,
+      { align: 'center' }
+    );
+    y += 26;
+  } else {
+    const bodyRows = params.rows.map((row, idx) => {
+      const detailText =
+        row.emptyBlocks.length > 0
+          ? row.emptyBlocks
+              .map((b) => {
+                const jamLabel =
+                  b.startPeriod === b.endPeriod
+                    ? `Jam ${b.startPeriod}`
+                    : `Jam ${b.startPeriod}-${b.endPeriod}`;
+                const reasonLabel =
+                  b.reason === 'tanpa_guru'
+                    ? 'Jadwal tanpa guru'
+                    : 'Belum terjadwal / kosong';
+                return `- ${b.dayName}, ${formatIndonesianShortDate(
+                  b.date
+                )} | ${jamLabel} (${b.timeRange}) | ${reasonLabel}`;
+              })
+              .join('\n')
+          : 'Seluruh slot jam pelajaran telah terisi guru pengajar';
+
+      return [
+        String(idx + 1),
+        `${row.className}\nTingkat Kelas ${row.grade === 10 ? 'X' : row.grade === 11 ? 'XI' : 'XII'}`,
+        row.programCode,
+        `${row.totalSlots} jam`,
+        `${row.filledSlots} jam`,
+        `${row.emptySlots} jam`,
+        detailText,
+        EMPTY_STATUS_LABEL_MAP[row.status],
+      ];
+    });
+
+    autoTable(doc, {
+      startY: y,
+      head: [
+        [
+          'NO',
+          'KELAS',
+          'JURUSAN',
+          'TOTAL SLOT',
+          'TERISI',
+          'KOSONG',
+          'RINCIAN JAM PELAJARAN KOSONG / BELUM DIISI GURU',
+          'STATUS',
+        ],
+      ],
+      body: bodyRows,
+      theme: 'grid',
+      margin: { left: 14, right: 14, bottom: 14 },
+      styles: {
+        font: 'helvetica',
+        fontSize: 7.5,
+        cellPadding: 2,
+        textColor: [30, 41, 59],
+        lineColor: [203, 213, 225],
+        lineWidth: 0.2,
+        valign: 'top',
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [241, 245, 249],
+        textColor: [15, 23, 42],
+        fontStyle: 'bold',
+        fontSize: 7.5,
+        halign: 'center',
+        valign: 'middle',
+      },
+      columnStyles: {
+        0: { cellWidth: 9, halign: 'center' },
+        1: { cellWidth: 34, fontStyle: 'bold' },
+        2: { cellWidth: 18, halign: 'center' },
+        3: { cellWidth: 20, halign: 'right' },
+        4: { cellWidth: 18, halign: 'right' },
+        5: { cellWidth: 18, halign: 'right', fontStyle: 'bold' },
+        6: { cellWidth: 'auto' },
+        7: { cellWidth: 26, halign: 'center', fontStyle: 'bold' },
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 7) {
+          const val = String(data.cell.raw || '');
+          if (val === 'Kosong Semua') {
+            data.cell.styles.textColor = [190, 18, 60];
+          } else if (val === 'Ada Jam Kosong') {
+            data.cell.styles.textColor = [180, 83, 9];
+          } else if (val === 'Terisi Penuh') {
+            data.cell.styles.textColor = [4, 120, 87];
+          }
+        }
+        if (data.section === 'body' && data.column.index === 5) {
+          const val = String(data.cell.raw || '');
+          if (!val.startsWith('0 ')) {
+            data.cell.styles.textColor = [190, 18, 60];
+          }
+        }
+      },
+    });
+
+    y = getLastTableFinalY(doc, y + 20);
+  }
+
+  drawSignatureBlock(doc, y, params.currentDateOnlyString);
+  addPageFooters(doc, params.currentDateTimeLabel);
+
+  return {
+    doc,
+    filename: `berita_acara_jadwal_kosong_${params.granularity}_${params.todayISO}.pdf`,
+    title: `Berita Acara Jadwal Pelajaran Kosong (${granularityLabel})`,
+    rowCount: params.rows.length,
   };
 };
 

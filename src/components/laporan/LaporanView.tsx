@@ -18,6 +18,8 @@ import {
   Users,
   XCircle,
   X,
+  CalendarX2,
+  GraduationCap,
 } from 'lucide-react';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
@@ -31,14 +33,20 @@ import {
   TeacherComplianceStatus,
 } from '../../data/journalCompliance';
 import {
+  computeEmptyScheduleAudit,
+  EmptySlotStatus,
+} from '../../data/emptyScheduleAudit';
+import {
   buildComplianceBeritaAcaraPdf,
+  buildEmptyScheduleBeritaAcaraPdf,
   buildScheduleBeritaAcaraPdf,
   downloadGeneratedPdf,
   GeneratedPdfResult,
 } from '../../data/beritaAcaraPdf';
 
-type ReportTab = 'jadwal' | 'kepatuhan_jurnal';
+type ReportTab = 'jadwal' | 'kepatuhan_jurnal' | 'jadwal_kosong';
 type ComplianceStatusFilter = 'NEED_ACTION' | 'BELUM' | 'SEBAGIAN' | 'LENGKAP' | 'ALL';
+type EmptyStatusFilter = 'HAS_EMPTY' | 'KOSONG_SEMUA' | 'LENGKAP' | 'ALL';
 
 const shiftDateISO = (iso: string, deltaDays: number): string => {
   const d = parseLocalISO(iso);
@@ -90,6 +98,15 @@ export const LaporanView: React.FC = () => {
   const [complianceStatusFilter, setComplianceStatusFilter] = useState<ComplianceStatusFilter>('NEED_ACTION');
   const [complianceSearch, setComplianceSearch] = useState<string>('');
   const [expandedTeacherIds, setExpandedTeacherIds] = useState<Record<string, boolean>>({});
+
+  // State Tab 3: Audit Jadwal Kosong / Belum Diisi Guru (Per Hari / Per Minggu / Per Bulan)
+  const [emptyUpToTodayOnly, setEmptyUpToTodayOnly] = useState<boolean>(false);
+  const [emptyDeptFilter, setEmptyDeptFilter] = useState<string>('all');
+  const [emptyGradeFilter, setEmptyGradeFilter] = useState<'ALL' | 10 | 11 | 12>('ALL');
+  const [emptyStatusFilter, setEmptyStatusFilter] = useState<EmptyStatusFilter>('HAS_EMPTY');
+  const [emptySearch, setEmptySearch] = useState<string>('');
+  const [expandedEmptyClassIds, setExpandedEmptyClassIds] = useState<Record<string, boolean>>({});
+
   const [generatedPdfModal, setGeneratedPdfModal] = useState<GeneratedPdfResult | null>(null);
   const [pdfFeedbackMessage, setPdfFeedbackMessage] = useState<string | null>(null);
   const [printFallbackHint, setPrintFallbackHint] = useState<string | null>(null);
@@ -225,6 +242,122 @@ export const LaporanView: React.FC = () => {
     }));
   };
 
+  // Data Tab 3: Rentang & Kalkulasi Jadwal Kosong / Belum Diisi Guru
+  const emptyPeriodRange = useMemo(
+    () =>
+      getPeriodDateRange({
+        granularity,
+        selectedDateISO,
+        selectedWeekAnchorISO,
+        selectedMonthKey,
+        upToTodayOnly: emptyUpToTodayOnly,
+        todayISO,
+      }),
+    [
+      granularity,
+      selectedDateISO,
+      selectedWeekAnchorISO,
+      selectedMonthKey,
+      emptyUpToTodayOnly,
+      todayISO,
+    ]
+  );
+
+  const emptyAudit = useMemo(
+    () =>
+      computeEmptyScheduleAudit({
+        evaluatedDates: emptyPeriodRange.evaluatedDates,
+        todayISO,
+        classes,
+        departments,
+        schedules,
+        activeWeekFilter,
+        monthlyWeekSchedules,
+        filterDept: emptyDeptFilter,
+        filterGrade: emptyGradeFilter,
+      }),
+    [
+      emptyPeriodRange.evaluatedDates,
+      todayISO,
+      classes,
+      departments,
+      schedules,
+      activeWeekFilter,
+      monthlyWeekSchedules,
+      emptyDeptFilter,
+      emptyGradeFilter,
+    ]
+  );
+
+  const emptySummary = useMemo(() => {
+    let totalClasses = emptyAudit.rows.length;
+    let kosongSemuaCount = 0;
+    let adaKosongCount = 0;
+    let lengkapCount = 0;
+    let totalSlots = 0;
+    let filledSlots = 0;
+    let totalEmptySlots = 0;
+
+    emptyAudit.rows.forEach((r) => {
+      totalSlots += r.totalSlots;
+      filledSlots += r.filledSlots;
+      totalEmptySlots += r.emptySlots;
+      if (r.status === 'kosong_semua') kosongSemuaCount++;
+      else if (r.status === 'ada_kosong') adaKosongCount++;
+      else if (r.status === 'lengkap') lengkapCount++;
+    });
+
+    const overallOccupancy =
+      totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 100) : 0;
+
+    return {
+      totalClasses,
+      kosongSemuaCount,
+      adaKosongCount,
+      classesWithEmptyCount: kosongSemuaCount + adaKosongCount,
+      lengkapCount,
+      totalSlots,
+      filledSlots,
+      totalEmptySlots,
+      overallOccupancy,
+    };
+  }, [emptyAudit.rows]);
+
+  const filteredEmptyRows = useMemo(() => {
+    return emptyAudit.rows.filter((row) => {
+      if (emptyStatusFilter === 'HAS_EMPTY') {
+        if (row.status !== 'kosong_semua' && row.status !== 'ada_kosong') return false;
+      } else if (emptyStatusFilter === 'KOSONG_SEMUA') {
+        if (row.status !== 'kosong_semua') return false;
+      } else if (emptyStatusFilter === 'LENGKAP') {
+        if (row.status !== 'lengkap') return false;
+      }
+
+      if (emptySearch.trim()) {
+        const q = emptySearch.toLowerCase().trim();
+        const matchClass =
+          row.className.toLowerCase().includes(q) ||
+          row.programCode.toLowerCase().includes(q) ||
+          row.programName.toLowerCase().includes(q);
+        const matchBlock = row.emptyBlocks.some(
+          (b) =>
+            b.dayName.toLowerCase().includes(q) ||
+            b.date.includes(q) ||
+            b.timeRange.toLowerCase().includes(q)
+        );
+        if (!matchClass && !matchBlock) return false;
+      }
+      return true;
+    });
+  }, [emptyAudit.rows, emptyStatusFilter, emptySearch]);
+
+  const toggleExpandEmptyClass = (classId: string) => {
+    setExpandedEmptyClassIds((prev) => ({
+      ...prev,
+      [classId]: !prev[classId],
+    }));
+  };
+
   const handlePrint = () => {
     setPrintFallbackHint(null);
     let result: GeneratedPdfResult;
@@ -260,6 +393,37 @@ export const LaporanView: React.FC = () => {
         needActionCount: complianceSummary.needActionCount,
         totalMissingSessions: complianceSummary.totalMissingSessions,
         statusFilterLabel: statusFilterMap[complianceStatusFilter],
+      });
+    } else if (activeReportTab === 'jadwal_kosong') {
+      const rotationText =
+        activeWeekFilter === 'AUTO'
+          ? 'Sesuai Jadwal Bulanan / Kalender'
+          : effectiveWeekType === 'P10_PROD_P11_NORM'
+          ? 'P10 Prod - P11 Norm (Dipaksa Admin)'
+          : effectiveWeekType === 'P10_NORM_P11_PROD'
+          ? 'P10 Norm - P11 Prod (Dipaksa Admin)'
+          : 'Semua Pekan';
+
+      const emptyStatusFilterMap: Record<EmptyStatusFilter, string> = {
+        HAS_EMPTY: 'Ada Jam Kosong',
+        KOSONG_SEMUA: 'Kosong Semua',
+        LENGKAP: 'Terisi Penuh',
+        ALL: 'Semua Kelas',
+      };
+
+      result = buildEmptyScheduleBeritaAcaraPdf({
+        rows: filteredEmptyRows,
+        granularity,
+        periodLabel: emptyPeriodRange.periodLabel,
+        evaluatedSchoolDaysCount: emptyAudit.evaluatedSchoolDates.length,
+        semesterString,
+        rotationLabel: rotationText,
+        currentDateOnlyString,
+        currentDateTimeLabel: `${currentDateOnlyString} ${currentTimeString}`,
+        todayISO,
+        classesWithEmptyCount: emptySummary.classesWithEmptyCount,
+        totalEmptySlots: emptySummary.totalEmptySlots,
+        statusFilterLabel: emptyStatusFilterMap[emptyStatusFilter],
       });
     } else {
       const rotationText =
@@ -374,6 +538,70 @@ export const LaporanView: React.FC = () => {
       return;
     }
 
+    if (activeReportTab === 'jadwal_kosong') {
+      const headers = [
+        'Periode',
+        'Rentang',
+        'Kelas',
+        'Tingkat',
+        'Jurusan',
+        'Total Slot Jam',
+        'Slot Terisi',
+        'Slot Kosong',
+        'Persentase Terisi',
+        'Status',
+        'Rincian Jam Kosong / Belum Diisi Guru',
+      ];
+
+      const granularityLabel =
+        granularity === 'daily' ? 'Per Hari' : granularity === 'weekly' ? 'Per Minggu' : 'Per Bulan';
+
+      const emptyStatusMap: Record<EmptySlotStatus, string> = {
+        kosong_semua: 'Kosong Semua',
+        ada_kosong: 'Ada Jam Kosong',
+        lengkap: 'Terisi Penuh',
+      };
+
+      const rows = filteredEmptyRows.map((r) => {
+        const detailStr = r.emptyBlocks
+          .map(
+            (b) =>
+              `${b.dayName} ${b.date} (Jam ${b.startPeriod}${
+                b.endPeriod !== b.startPeriod ? `-${b.endPeriod}` : ''
+              } / ${b.timeRange} - ${
+                b.reason === 'tanpa_guru' ? 'Jadwal tanpa guru' : 'Belum terjadwal'
+              })`
+          )
+          .join('; ');
+        return [
+          `"${granularityLabel}"`,
+          `"${emptyPeriodRange.periodLabel}"`,
+          `"${r.className}"`,
+          `"Kelas ${r.grade}"`,
+          `"${r.programCode}"`,
+          r.totalSlots,
+          r.filledSlots,
+          r.emptySlots,
+          `"${r.occupancyPercent}%"`,
+          `"${emptyStatusMap[r.status]}"`,
+          `"${detailStr || '-'}"`,
+        ].join(',');
+      });
+
+      const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute(
+        'download',
+        `rekap_jadwal_kosong_${granularity}_${todayISO}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+
     const headers = [
       'Jam Ke',
       'Waktu',
@@ -459,6 +687,31 @@ export const LaporanView: React.FC = () => {
     );
   };
 
+  const renderEmptySlotStatus = (status: EmptySlotStatus) => {
+    if (status === 'kosong_semua') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-700 whitespace-nowrap">
+          <XCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>Kosong Semua</span>
+        </span>
+      );
+    }
+    if (status === 'ada_kosong') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 whitespace-nowrap">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          <span>Ada Jam Kosong</span>
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 whitespace-nowrap">
+        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+        <span>Terisi Penuh</span>
+      </span>
+    );
+  };
+
   const granularityTitle =
     granularity === 'daily'
       ? 'Harian'
@@ -498,12 +751,16 @@ export const LaporanView: React.FC = () => {
           <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight mt-1">
             {activeReportTab === 'jadwal'
               ? 'Laporan Rekapitulasi Jadwal Pembelajaran'
-              : 'Monitoring Guru Belum Mengisi Jurnal Mengajar'}
+              : activeReportTab === 'kepatuhan_jurnal'
+              ? 'Monitoring Guru Belum Mengisi Jurnal Mengajar'
+              : 'Laporan Jadwal Pelajaran Kosong / Belum Diisi Guru'}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             {activeReportTab === 'jadwal'
               ? 'Unduh format digital atau cetak berita acara resmi status pelaksanaan jadwal KBM (Berlangsung, Selesai, Terjadwal).'
-              : 'Pantau kepatuhan pengisian jurnal mengajar guru secara harian, mingguan, maupun bulanan sesuai jadwal KBM aktif.'}
+              : activeReportTab === 'kepatuhan_jurnal'
+              ? 'Pantau kepatuhan pengisian jurnal mengajar guru secara harian, mingguan, maupun bulanan sesuai jadwal KBM aktif.'
+              : 'Deteksi slot jam pelajaran yang masih kosong atau belum terisi guru pengajar per kelas secara harian, mingguan, maupun bulanan.'}
           </p>
         </div>
 
@@ -529,7 +786,7 @@ export const LaporanView: React.FC = () => {
 
       {/* Sub-Menu Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 no-print">
-        <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+        <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
           <button
             type="button"
             onClick={() => setActiveReportTab('jadwal')}
@@ -562,6 +819,29 @@ export const LaporanView: React.FC = () => {
                 }`}
               >
                 {complianceSummary.needActionCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveReportTab('jadwal_kosong')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+              activeReportTab === 'jadwal_kosong'
+                ? 'bg-[#082032] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/70'
+            }`}
+          >
+            <CalendarX2 className="w-3.5 h-3.5" />
+            <span>Jadwal Kosong (Belum Diisi Guru)</span>
+            {emptySummary.classesWithEmptyCount > 0 && (
+              <span
+                className={`text-[11px] font-mono tabular-nums px-1.5 py-0.5 rounded-md ${
+                  activeReportTab === 'jadwal_kosong'
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-amber-100 text-amber-800'
+                }`}
+              >
+                {emptySummary.classesWithEmptyCount}
               </span>
             )}
           </button>
@@ -1296,6 +1576,592 @@ export const LaporanView: React.FC = () => {
                             </td>
                           </tr>
                         </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Tanda Tangan Pejabat Sekolah */}
+            <div className="pt-10 grid grid-cols-2 gap-8 text-center text-xs text-slate-800">
+              <div>
+                <p className="text-slate-600">Mengetahui,</p>
+                <p className="font-bold text-slate-900 mt-0.5">Kepala SMKN 1 Tegalsari</p>
+                <div className="h-16"></div>
+                <p className="font-extrabold underline text-slate-900">CANDRA SURO LAKSONO, S.Pi</p>
+                <p className="text-slate-500 font-mono text-[11px]">NIP. 19840925 201101 1 011</p>
+              </div>
+
+              <div>
+                <p className="text-slate-600">Tegalsari, {currentDateOnlyString}</p>
+                <p className="font-bold text-slate-900 mt-0.5">Waka Bidang Kurikulum</p>
+                <div className="h-16"></div>
+                <p className="font-extrabold underline text-slate-900">EKO PRAMESTI SUMARTO, S.Mat</p>
+                <p className="text-slate-500 font-mono text-[11px]">NIP. 19870618 202421 1 002</p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB 3: AUDIT JADWAL PELAJARAN KOSONG / BELUM DIISI GURU             */}
+      {/* =================================================================== */}
+      {activeReportTab === 'jadwal_kosong' && (
+        <>
+          {/* Toolbar Kontrol Periode (Harian / Mingguan / Bulanan) & Filter */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 text-xs no-print">
+            {/* Baris 1: Granularity & Date/Week/Month Picker */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Segmented Periode */}
+                <div className="inline-flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setGranularity('daily')}
+                    className={`px-3.5 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                      granularity === 'daily'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Per Hari
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGranularity('weekly')}
+                    className={`px-3.5 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                      granularity === 'weekly'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Per Minggu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGranularity('monthly')}
+                    className={`px-3.5 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                      granularity === 'monthly'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Per Bulan
+                  </button>
+                </div>
+
+                {/* Picker Per Hari */}
+                {granularity === 'daily' && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDateISO((d) => shiftDateISO(d, -1))}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                      title="Hari Sebelumnya"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="date"
+                      value={selectedDateISO}
+                      onChange={(e) => e.target.value && setSelectedDateISO(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 font-bold text-slate-800 outline-none focus:border-cyan-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDateISO((d) => shiftDateISO(d, 1))}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                      title="Hari Berikutnya"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDateISO(todayISO)}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200 hover:bg-cyan-100 font-bold cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      Hari Ini
+                    </button>
+                  </div>
+                )}
+
+                {/* Picker Per Minggu */}
+                {granularity === 'weekly' && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWeekAnchorISO((d) => shiftDateISO(d, -7))}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                      title="Minggu Sebelumnya"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="date"
+                      value={selectedWeekAnchorISO}
+                      onChange={(e) => e.target.value && setSelectedWeekAnchorISO(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 font-bold text-slate-800 outline-none focus:border-cyan-600"
+                      title="Pilih tanggal mana saja dalam minggu yang ingin dicek"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWeekAnchorISO((d) => shiftDateISO(d, 7))}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                      title="Minggu Berikutnya"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWeekAnchorISO(todayISO)}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200 hover:bg-cyan-100 font-bold cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      Minggu Ini
+                    </button>
+                  </div>
+                )}
+
+                {/* Picker Per Bulan */}
+                {granularity === 'monthly' && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMonthKey((m) => shiftMonthKey(m, -1))}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                      title="Bulan Sebelumnya"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="month"
+                      value={selectedMonthKey}
+                      onChange={(e) => e.target.value && setSelectedMonthKey(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 font-bold text-slate-800 outline-none focus:border-cyan-600"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMonthKey((m) => shiftMonthKey(m, 1))}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                      title="Bulan Berikutnya"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMonthKey(todayISO.slice(0, 7))}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200 hover:bg-cyan-100 font-bold cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      Bulan Ini
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Opsi batas s/d hari ini untuk mingguan & bulanan */}
+              {granularity !== 'daily' && (
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={emptyUpToTodayOnly}
+                    onChange={(e) => setEmptyUpToTodayOnly(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-cyan-700 focus:ring-cyan-500 cursor-pointer"
+                  />
+                  <span>Batasi evaluasi s/d hari ini ({formatIndonesianShortDate(todayISO)})</span>
+                </label>
+              )}
+            </div>
+
+            {/* Baris 2: Filter Status, Tingkat Kelas, Jurusan, & Pencarian */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEmptyStatusFilter('HAS_EMPTY')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    emptyStatusFilter === 'HAS_EMPTY'
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  Ada Jam Kosong ({emptySummary.classesWithEmptyCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEmptyStatusFilter('KOSONG_SEMUA')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    emptyStatusFilter === 'KOSONG_SEMUA'
+                      ? 'bg-rose-700 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  Kosong Semua ({emptySummary.kosongSemuaCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEmptyStatusFilter('LENGKAP')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    emptyStatusFilter === 'LENGKAP'
+                      ? 'bg-emerald-700 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  Terisi Penuh ({emptySummary.lengkapCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEmptyStatusFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer whitespace-nowrap shrink-0 ${
+                    emptyStatusFilter === 'ALL'
+                      ? 'bg-[#082032] text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  Semua Kelas ({emptySummary.totalClasses})
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-1.5">
+                  <GraduationCap className="w-3.5 h-3.5 text-slate-400" />
+                  <select
+                    value={emptyGradeFilter}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEmptyGradeFilter(v === 'ALL' ? 'ALL' : (Number(v) as 10 | 11 | 12));
+                    }}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none cursor-pointer"
+                  >
+                    <option value="ALL">Semua Tingkat</option>
+                    <option value="10">Kelas X (10)</option>
+                    <option value="11">Kelas XI (11)</option>
+                    <option value="12">Kelas XII (12)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5 text-slate-400" />
+                  <select
+                    value={emptyDeptFilter}
+                    onChange={(e) => setEmptyDeptFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-bold text-slate-800 outline-none cursor-pointer"
+                  >
+                    <option value="all">Semua Program Keahlian</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.code}>
+                        {d.code} - {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={emptySearch}
+                    onChange={(e) => setEmptySearch(e.target.value)}
+                    placeholder="Cari kelas, jurusan, hari..."
+                    className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 w-52 outline-none focus:border-cyan-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Metadata Periode Aktif */}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 pt-1">
+              <span>Periode Audit:</span>
+              <span className="font-bold text-slate-800">{emptyPeriodRange.periodLabel}</span>
+              <span aria-hidden="true">·</span>
+              <span className="tabular-nums">
+                {emptyAudit.evaluatedSchoolDates.length} hari belajar KBM (11 jam/hari)
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                Rotasi Pekan:{' '}
+                <strong className="text-slate-700">
+                  {activeWeekFilter === 'AUTO'
+                    ? 'Sesuai Jadwal Bulanan / Kalender'
+                    : effectiveWeekType === 'P10_PROD_P11_NORM'
+                    ? 'P10 Prod · P11 Norm (Dipaksa Admin)'
+                    : effectiveWeekType === 'P10_NORM_P11_PROD'
+                    ? 'P10 Norm · P11 Prod (Dipaksa Admin)'
+                    : 'Semua Pekan'}
+                </strong>
+              </span>
+            </div>
+          </div>
+
+          {/* 4 KPI Strip */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 no-print">
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-slate-500">Kelas Dievaluasi</p>
+                <p className="text-2xl font-black text-slate-900 tabular-nums mt-1">
+                  {emptySummary.totalClasses}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
+                  {emptySummary.totalSlots} total slot jam KBM
+                </p>
+              </div>
+              <GraduationCap className="w-5 h-5 text-slate-400 shrink-0" />
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-slate-500">Kelas Ada Jam Kosong</p>
+                <p className="text-2xl font-black text-amber-700 tabular-nums mt-1">
+                  {emptySummary.classesWithEmptyCount}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                  {emptySummary.kosongSemuaCount} kosong semua · {emptySummary.adaKosongCount} sebagian
+                </p>
+              </div>
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-slate-500">Kelas Terisi Penuh</p>
+                <p className="text-2xl font-black text-emerald-700 tabular-nums mt-1">
+                  {emptySummary.lengkapCount}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                  Keterisian rata-rata {emptySummary.overallOccupancy}%
+                </p>
+              </div>
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-slate-500">Jam Pelajaran Kosong</p>
+                <p className="text-2xl font-black text-rose-700 tabular-nums mt-1">
+                  {emptySummary.totalEmptySlots}
+                </p>
+                <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                  Slot belum terjadwal / tanpa guru
+                </p>
+              </div>
+              <CalendarX2 className="w-5 h-5 text-rose-600 shrink-0" />
+            </div>
+          </div>
+
+          {/* Printable Audit Jadwal Kosong Sheet */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-xs print:p-0 print:border-none print:shadow-none space-y-6">
+            {/* Kop Surat Sekolah */}
+            <div className="border-b-2 border-slate-900 pb-4 text-center space-y-1">
+              <p className="text-xs uppercase tracking-widest font-bold text-slate-600">
+                Pemerintah Provinsi Jawa Timur · Dinas Pendidikan
+              </p>
+              <h2 className="text-lg md:text-xl font-black text-slate-950 uppercase tracking-tight">
+                SMK Negeri 1 Tegalsari Banyuwangi
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                Jl. KH. Abdul Majid No.09, Krajan 2, Tegalsari, Kec. Tegalsari, Kabupaten Banyuwangi, Jawa Timur 68491
+              </p>
+              <p className="text-[10px] text-slate-400 font-mono">
+                NPSN: 20540177 · Website: smkn1tegalsari.sch.id · Email: info@smkn1tegalsari.sch.id
+              </p>
+            </div>
+
+            {/* Header Dokumen Jadwal Kosong */}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-200 pb-3">
+              <div>
+                <span className="font-extrabold text-slate-900 block uppercase">
+                  LAPORAN JADWAL PELAJARAN KOSONG / BELUM DIISI GURU ({granularityTitle.toUpperCase()})
+                </span>
+                <span className="text-slate-500">
+                  Periode: {emptyPeriodRange.periodLabel} · Dievaluasi: {emptyAudit.evaluatedSchoolDates.length} hari belajar KBM
+                </span>
+              </div>
+
+              <div className="text-right">
+                <span className="font-bold text-slate-700 block">{semesterString}</span>
+                <span className="text-slate-500 text-[11px] tabular-nums">
+                  {emptySummary.classesWithEmptyCount} kelas ada jam kosong · {emptySummary.totalEmptySlots} slot jam kosong
+                </span>
+              </div>
+            </div>
+
+            {emptyAudit.evaluatedSchoolDates.length === 0 ? (
+              <div className="py-12 text-center space-y-3">
+                <Clock className="w-8 h-8 text-amber-500 mx-auto" />
+                <p className="text-sm font-bold text-slate-800">
+                  {granularity === 'daily'
+                    ? 'Tanggal yang dipilih merupakan hari libur akhir pekan (Sabtu / Minggu)'
+                    : 'Tidak ada hari belajar KBM yang dievaluasi pada rentang ini'}
+                </p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  {granularity === 'daily'
+                    ? 'Jadwal KBM reguler berjalan pada hari Senin sampai Jumat. Silakan pilih tanggal hari kerja.'
+                    : 'Nonaktifkan batas evaluasi s/d hari ini untuk melihat audit seluruh slot pada minggu/bulan terpilih.'}
+                </p>
+                {granularity !== 'daily' && emptyUpToTodayOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setEmptyUpToTodayOnly(false)}
+                    className="px-4 py-2 text-xs font-bold text-white bg-cyan-700 hover:bg-cyan-800 rounded-xl cursor-pointer"
+                  >
+                    Tampilkan Seluruh Hari dalam Periode
+                  </button>
+                )}
+              </div>
+            ) : filteredEmptyRows.length === 0 ? (
+              <div className="py-12 text-center space-y-3">
+                <CheckCircle2 className="w-9 h-9 text-emerald-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-800">
+                  {emptyStatusFilter === 'HAS_EMPTY' || emptyStatusFilter === 'KOSONG_SEMUA'
+                    ? 'Seluruh kelas sudah memiliki guru pengajar di setiap jam KBM'
+                    : 'Tidak ada data kelas yang cocok dengan filter'}
+                </p>
+                <p className="text-xs text-slate-500 max-w-lg mx-auto">
+                  Anda dapat meninjau seluruh kelas beserta rekap keterisian jadwal melalui tombol di bawah.
+                </p>
+                {emptyStatusFilter !== 'ALL' && (
+                  <button
+                    type="button"
+                    onClick={() => setEmptyStatusFilter('ALL')}
+                    className="px-4 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                  >
+                    Tampilkan Semua Kelas ({emptySummary.totalClasses})
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border border-slate-300">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] border-b border-slate-300">
+                      <th className="py-2.5 px-2 border-r border-slate-300 text-center w-10">NO</th>
+                      <th className="py-2.5 px-3 border-r border-slate-300">KELAS & TINGKAT</th>
+                      <th className="py-2.5 px-2.5 border-r border-slate-300 text-center">JURUSAN</th>
+                      <th className="py-2.5 px-2.5 border-r border-slate-300 text-right">TOTAL SLOT</th>
+                      <th className="py-2.5 px-2.5 border-r border-slate-300 text-right">TERISI</th>
+                      <th className="py-2.5 px-2.5 border-r border-slate-300 text-right">KOSONG</th>
+                      <th className="py-2.5 px-3 border-r border-slate-300">RINCIAN JAM KOSONG / BELUM DIISI GURU</th>
+                      <th className="py-2.5 px-3 text-center">STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {filteredEmptyRows.map((row, idx) => {
+                      const isExpanded = Boolean(expandedEmptyClassIds[row.classId]);
+                      const hasMoreBlocks = row.emptyBlocks.length > 2;
+                      const previewBlocks = row.emptyBlocks.slice(0, 2);
+
+                      return (
+                        <tr key={row.classId} className="text-slate-800 hover:bg-slate-50/70 align-top">
+                          <td className="py-2.5 px-2 text-center font-semibold border-r border-slate-300 tabular-nums text-slate-500">
+                            {idx + 1}
+                          </td>
+                          <td className="py-2.5 px-3 border-r border-slate-300">
+                            <div className="font-bold text-slate-900">{row.className}</div>
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              Kelas {row.grade === 10 ? 'X' : row.grade === 11 ? 'XI' : 'XII'} ({row.occupancyPercent}% terisi)
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2.5 border-r border-slate-300 text-center font-semibold text-slate-700">
+                            {row.programCode}
+                          </td>
+                          <td className="py-2.5 px-2.5 border-r border-slate-300 text-right font-mono tabular-nums font-semibold">
+                            {row.totalSlots} jam
+                          </td>
+                          <td className="py-2.5 px-2.5 border-r border-slate-300 text-right font-mono tabular-nums font-bold text-emerald-700">
+                            {row.filledSlots} jam
+                          </td>
+                          <td
+                            className={`py-2.5 px-2.5 border-r border-slate-300 text-right font-mono tabular-nums font-black ${
+                              row.emptySlots > 0 ? 'text-rose-700' : 'text-slate-400'
+                            }`}
+                          >
+                            {row.emptySlots} jam
+                          </td>
+                          <td className="py-2.5 px-3 border-r border-slate-300 text-[11px] max-w-md">
+                            {row.emptyBlocks.length === 0 ? (
+                              <span className="text-emerald-700 font-medium">
+                                Seluruh jam pelajaran sudah terisi guru pengajar
+                              </span>
+                            ) : (
+                              <div className="space-y-1">
+                                {(isExpanded ? row.emptyBlocks : previewBlocks).map((b, bIdx) => (
+                                  <div
+                                    key={`${b.date}-${b.startPeriod}-${bIdx}`}
+                                    className="text-slate-700 leading-snug"
+                                  >
+                                    <span className="font-semibold text-slate-900">
+                                      {b.dayName}, {formatIndonesianShortDate(b.date)}
+                                    </span>{' '}
+                                    ·{' '}
+                                    <span className="font-bold text-rose-800 font-mono tabular-nums">
+                                      Jam {b.startPeriod}
+                                      {b.endPeriod !== b.startPeriod ? `-${b.endPeriod}` : ''}
+                                    </span>{' '}
+                                    <span className="text-slate-500 font-mono text-[10px]">
+                                      ({b.timeRange})
+                                    </span>{' '}
+                                    ·{' '}
+                                    <span className="text-slate-600">
+                                      {b.reason === 'tanpa_guru'
+                                        ? 'Jadwal tanpa guru'
+                                        : 'Belum terjadwal / kosong'}
+                                    </span>
+                                  </div>
+                                ))}
+                                {hasMoreBlocks && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleExpandEmptyClass(row.classId)}
+                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-cyan-700 hover:text-cyan-900 pt-0.5 cursor-pointer no-print"
+                                  >
+                                    {isExpanded ? (
+                                      <>
+                                        <ChevronUp className="w-3.5 h-3.5" />
+                                        <span>Tutup rincian</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ChevronDown className="w-3.5 h-3.5" />
+                                        <span>Lihat semua {row.emptyBlocks.length} blok jam kosong</span>
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+                                {!isExpanded && hasMoreBlocks && (
+                                  <div className="hidden print:block space-y-1">
+                                    {row.emptyBlocks.slice(2).map((b, bIdx) => (
+                                      <div
+                                        key={`print-${b.date}-${b.startPeriod}-${bIdx}`}
+                                        className="text-slate-700 leading-snug"
+                                      >
+                                        <span className="font-semibold text-slate-900">
+                                          {b.dayName}, {formatIndonesianShortDate(b.date)}
+                                        </span>{' '}
+                                        ·{' '}
+                                        <span className="font-bold text-rose-800 font-mono tabular-nums">
+                                          Jam {b.startPeriod}
+                                          {b.endPeriod !== b.startPeriod ? `-${b.endPeriod}` : ''}
+                                        </span>{' '}
+                                        <span className="text-slate-500 font-mono text-[10px]">
+                                          ({b.timeRange})
+                                        </span>{' '}
+                                        ·{' '}
+                                        <span className="text-slate-600">
+                                          {b.reason === 'tanpa_guru'
+                                            ? 'Jadwal tanpa guru'
+                                            : 'Belum terjadwal / kosong'}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            {renderEmptySlotStatus(row.status)}
+                          </td>
+                        </tr>
                       );
                     })}
                   </tbody>
