@@ -28,6 +28,10 @@ import {
   getWeekTypeShortLabel,
   isScheduleMatchingWeek,
 } from '../../data/scheduleWeeks';
+import {
+  buildTeachingJournalPdf,
+  downloadGeneratedPdf,
+} from '../../data/beritaAcaraPdf';
 
 interface SyncedScheduleCard {
   key: string;
@@ -94,6 +98,9 @@ export const JurnalMengajarView: React.FC = () => {
     realtimeWeekType,
     effectiveWeekType,
     monthlyWeekSchedules,
+    semesterString,
+    currentDateOnlyString,
+    currentTimeString,
   } = useApp();
 
   // Resolusi data guru milik akun login jika role guru
@@ -526,7 +533,23 @@ export const JurnalMengajarView: React.FC = () => {
   };
 
   const handlePrint = () => {
-    window.print();
+    const teacherScopeLabel =
+      currentUser.role === 'guru'
+        ? activeSyncTeacher?.name || currentUser.name
+        : filterTeacherId === 'ALL'
+        ? 'Semua Guru'
+        : teachers.find((t) => t.id === filterTeacherId)?.name || 'Guru Terpilih';
+
+    const result = buildTeachingJournalPdf({
+      journals: filteredJournals,
+      teacherTitleLabel: teacherScopeLabel,
+      semesterString,
+      currentDateOnlyString,
+      currentDateTimeLabel: `${currentDateOnlyString} ${currentTimeString}`,
+      todayISO,
+    });
+    downloadGeneratedPdf(result.doc, result.filename);
+    setToastMessage(`PDF Jurnal Mengajar "${result.filename}" berhasil dibuat dan diunduh.`);
   };
 
   const handleExportCSV = () => {
@@ -601,7 +624,7 @@ export const JurnalMengajarView: React.FC = () => {
       )}
 
       {/* Header Banner */}
-      <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
         <div className="space-y-1">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-2xl bg-[#6B9A95]/15 text-[#4E7D78] flex items-center justify-center font-bold">
@@ -632,10 +655,10 @@ export const JurnalMengajarView: React.FC = () => {
           <button
             onClick={handlePrint}
             className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition cursor-pointer border border-slate-200"
-            title="Cetak Jurnal"
+            title="Cetak / Unduh PDF Jurnal"
           >
             <Printer className="w-4 h-4 text-slate-600" />
-            <span className="hidden sm:inline">Cetak</span>
+            <span className="hidden sm:inline">Cetak PDF</span>
           </button>
           <button
             onClick={handleOpenAdd}
@@ -648,7 +671,7 @@ export const JurnalMengajarView: React.FC = () => {
       </div>
 
       {/* PANEL SINKRONISASI JADWAL MENGAJAR GURU (SESUAI HARI & PILIHAN PEKAN MINGGUAN) */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4">
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4 no-print">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">

@@ -10,7 +10,7 @@
 }
 
 @media print {
-  aside, nav, .no-print {
+  header, aside, nav, .no-print {
     display: none !important;
   }
   body, main {
@@ -18,6 +18,8 @@
     padding: 0 !important;
     margin: 0 !important;
     color: black !important;
+    overflow: visible !important;
+    height: auto !important;
   }
   @page {
     size: landscape;

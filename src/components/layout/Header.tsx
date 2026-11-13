@@ -38,7 +38,7 @@ export const Header: React.FC<HeaderProps> = () => {
   const RoleIcon = roleLabels[currentUser.role]?.icon || User;
 
   return (
-    <header className="bg-white border-b border-slate-200/80 px-4 md:px-6 py-3 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-20 shadow-xs">
+    <header className="bg-white border-b border-slate-200/80 px-4 md:px-6 py-3 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-20 shadow-xs print:hidden">
       {/* Title & Subtitle */}
       <div>
         <div className="flex items-center gap-2">
