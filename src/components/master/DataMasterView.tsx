@@ -29,9 +29,25 @@ import {
   Copy,
   Download,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  Save,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Teacher, Subject, SchoolClass, Room, Department, AcademicYear, ScheduleItem, ScheduleWeekType } from '../../types';
+import {
+  Teacher,
+  Subject,
+  SchoolClass,
+  Room,
+  Department,
+  AcademicYear,
+  ScheduleItem,
+  ScheduleWeekType,
+  MonthlyWeekEntry,
+  ActiveWeekRotationType,
+} from '../../types';
+import { getMonthWeeks, toLocalDateISO } from '../../data/scheduleWeeks';
 import { BulkImportModal } from './BulkImportModal';
 import { ScheduleImportModal } from './ScheduleImportModal';
 import { BulkDeleteMasterModal } from './BulkDeleteMasterModal';
@@ -52,6 +68,10 @@ export const DataMasterView: React.FC = () => {
     realtimeWeekType,
     activeWeekFilter,
     effectiveWeekType,
+    monthlyWeekSchedules,
+    setActiveWeekFilter,
+    setMonthlyWeekPlan,
+    clearMonthlyWeekPlan,
     getWeekTypeLabel,
     getWeekTypeShortLabel,
     addTeacher,
@@ -215,8 +235,29 @@ export const DataMasterView: React.FC = () => {
     }
   };
 
-  const [activeTab, setActiveTab] = useState<'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal'>('guru');
+  const [activeTab, setActiveTab] = useState<'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'rotasi_pekan'>('guru');
   const [search, setSearch] = useState('');
+
+  // State Pengaturan Rotasi Pekan & Jadwal Bulanan
+  const [selectedMonthKey, setSelectedMonthKey] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [draftMonthWeeks, setDraftMonthWeeks] = useState<MonthlyWeekEntry[]>(() => {
+    const now = new Date();
+    return getMonthWeeks(now.getFullYear(), now.getMonth());
+  });
+
+  useEffect(() => {
+    const parts = selectedMonthKey.split('-');
+    if (parts.length === 2) {
+      const y = parseInt(parts[0], 10);
+      const m0 = parseInt(parts[1], 10) - 1;
+      if (!isNaN(y) && !isNaN(m0) && m0 >= 0 && m0 <= 11) {
+        setDraftMonthWeeks(getMonthWeeks(y, m0, monthlyWeekSchedules[selectedMonthKey]));
+      }
+    }
+  }, [selectedMonthKey, monthlyWeekSchedules]);
 
   // Bulk Selection & Action States (Centang Banyak)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -954,19 +995,25 @@ export const DataMasterView: React.FC = () => {
             <Clock className="w-3.5 h-3.5 text-amber-500" />
             <span>{currentDateString} · {currentTimeString}</span>
           </span>
-          <span className="text-xs font-bold text-slate-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => handleTabChange('rotasi_pekan')}
+            className="text-xs font-bold text-slate-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+            title="Klik untuk mengatur atau memaksa pekan aktif minggu ini / bulanan"
+          >
             <CalendarDays className="w-3.5 h-3.5 text-cyan-700" />
             <span>
               Rotasi Aktif:{' '}
               <strong className="underline text-amber-950">
                 {effectiveWeekType === 'P10_PROD_P11_NORM'
-                  ? 'Pekan K10 Prod & K11 Norm'
+                  ? 'Pekan 10 Prod · 11 Normada'
                   : effectiveWeekType === 'P10_NORM_P11_PROD'
-                  ? 'Pekan K10 Norm & K11 Prod'
+                  ? 'Pekan 10 Normada · 11 Prod'
                   : 'Semua Pekan'}
               </strong>
+              {activeWeekFilter !== 'AUTO' ? ' (Dipaksa Admin)' : ' (Otomatis)'}
             </span>
-          </span>
+          </button>
         </div>
       </div>
 
@@ -1042,29 +1089,43 @@ export const DataMasterView: React.FC = () => {
           <span>Jadwal Pelajaran ({schedules.length})</span>
         </button>
 
+        <button
+          onClick={() => handleTabChange('rotasi_pekan')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            activeTab === 'rotasi_pekan'
+              ? 'bg-[#0B1E2E] text-emerald-300 ring-2 ring-emerald-400/50 shadow-md'
+              : 'text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+          }`}
+        >
+          <Sliders className="w-4 h-4 text-emerald-600" />
+          <span>Rotasi Pekan Mingguan</span>
+        </button>
+
         {/* Tombol Pemeliharaan Database: Kosongkan Tab / Kosongkan Seluruh Database */}
         <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => {
-              const stats = getCurrentTabStats();
-              setConfirmSafetyCheck(false);
-              setDeleteTarget({
-                type: 'kosongkan_tab',
-                tabKey: activeTab,
-                title: stats.name,
-                subtitle: `Tindakan ini akan mengosongkan seluruh isi ${stats.name} (${stats.count} ${stats.unit}) secara permanen dari Cloud Firestore dan server sistem.`,
-                badge: stats.name,
-                itemCount: stats.count,
-                itemUnit: stats.unit,
-                warningNote: 'PERHATIAN: Data yang telah dikosongkan tidak akan muncul lagi setelah direfresh. Anda dapat mengimpor data baru kapan pun dari file spreadsheet/Excel.'
-              });
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-rose-700 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
-            title="Kosongkan seluruh data pada tab ini secara permanen"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Kosongkan Data Tab Ini</span>
-          </button>
+          {activeTab !== 'rotasi_pekan' && (
+            <button
+              onClick={() => {
+                const stats = getCurrentTabStats();
+                setConfirmSafetyCheck(false);
+                setDeleteTarget({
+                  type: 'kosongkan_tab',
+                  tabKey: activeTab,
+                  title: stats.name,
+                  subtitle: `Tindakan ini akan mengosongkan seluruh isi ${stats.name} (${stats.count} ${stats.unit}) secara permanen dari Cloud Firestore dan server sistem.`,
+                  badge: stats.name,
+                  itemCount: stats.count,
+                  itemUnit: stats.unit,
+                  warningNote: 'PERHATIAN: Data yang telah dikosongkan tidak akan muncul lagi setelah direfresh. Anda dapat mengimpor data baru kapan pun dari file spreadsheet/Excel.'
+                });
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-rose-700 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 text-xs font-bold rounded-xl transition cursor-pointer"
+              title="Kosongkan seluruh data pada tab ini secara permanen"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Kosongkan Data Tab Ini</span>
+            </button>
+          )}
 
           <button
             onClick={() => {
@@ -2343,6 +2404,417 @@ export const DataMasterView: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 8. TAB: ROTASI PEKAN MINGGUAN (PAKSA PEKAN MINGGU INI & JADWAL PEKAN BULANAN) */}
+      {activeTab === 'rotasi_pekan' && (() => {
+        const todayIso = toLocalDateISO(new Date());
+        const [selYearStr, selMonthStr] = selectedMonthKey.split('-');
+        const selYear = parseInt(selYearStr || '2026', 10);
+        const selMonth0 = Math.max(0, Math.min(11, parseInt(selMonthStr || '1', 10) - 1));
+        const INDO_MONTHS = [
+          'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+          'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+        ];
+        const selectedMonthLabel = `${INDO_MONTHS[selMonth0]} ${selYear}`;
+        const hasSavedMonthPlan = Array.isArray(monthlyWeekSchedules[selectedMonthKey]) && monthlyWeekSchedules[selectedMonthKey].length > 0;
+
+        const shiftMonth = (delta: number) => {
+          const d = new Date(selYear, selMonth0 + delta, 1);
+          setSelectedMonthKey(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        };
+
+        const formatShortIndoDate = (iso: string) => {
+          const parts = iso.split('-');
+          if (parts.length !== 3) return iso;
+          const d = parseInt(parts[2], 10);
+          const mIdx = parseInt(parts[1], 10) - 1;
+          return `${d} ${INDO_MONTHS[mIdx]?.slice(0, 3) || ''} ${parts[0]}`;
+        };
+
+        const handleApplyAlternatingPattern = (firstWeekType: ActiveWeekRotationType) => {
+          const secondWeekType: ActiveWeekRotationType =
+            firstWeekType === 'P10_PROD_P11_NORM' ? 'P10_NORM_P11_PROD' : 'P10_PROD_P11_NORM';
+          setDraftMonthWeeks((prev) =>
+            prev.map((w, idx) => ({
+              ...w,
+              weekType: idx % 2 === 0 ? firstWeekType : secondWeekType,
+            }))
+          );
+        };
+
+        const handleUpdateDraftWeek = (weekNumber: number, weekType: ActiveWeekRotationType) => {
+          setDraftMonthWeeks((prev) =>
+            prev.map((w) => (w.weekNumber === weekNumber ? { ...w, weekType } : w))
+          );
+        };
+
+        const handleSaveMonthlyPlan = () => {
+          setMonthlyWeekPlan(selectedMonthKey, draftMonthWeeks);
+          setToastNotification(
+            `Jadwal pekan bulanan untuk ${selectedMonthLabel} berhasil disimpan ke database & disinkronkan!`
+          );
+        };
+
+        const handleClearMonthlyPlan = () => {
+          clearMonthlyWeekPlan(selectedMonthKey);
+          setDraftMonthWeeks(getMonthWeeks(selYear, selMonth0));
+          setToastNotification(
+            `Pengaturan manual bulan ${selectedMonthLabel} direset ke pola kalender default.`
+          );
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* PANEL 1: PAKSA PEKAN AKTIF MINGGU INI (OVERRIDE GLOBAL) */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                      <Lock className="w-3 h-3" />
+                      Kontrol Admin Global
+                    </span>
+                    <span className="text-xs font-bold text-slate-500">
+                      Berlaku langsung untuk Monitoring, Mode TV, Guru Piket, Pembelajaran Saya & Jurnal Mengajar
+                    </span>
+                  </div>
+                  <h2 className="text-lg font-extrabold text-slate-900">
+                    Paksa Pekan Aktif Minggu Ini
+                  </h2>
+                  <p className="text-xs text-slate-600">
+                    Gunakan tombol di bawah jika Admin ingin memaksa pekan aktif saat ini secara manual atau mengembalikannya ke mode Otomatis (Jadwal Pekan Bulanan / Kalender).
+                  </p>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-right">
+                  <div className="text-[11px] font-semibold text-slate-500">Status Pekan Aktif Saat Ini</div>
+                  <div className="text-sm font-black text-[#0B1E2E] mt-0.5">
+                    {getWeekTypeLabel(effectiveWeekType)}
+                  </div>
+                  <div className="text-[11px] font-bold mt-0.5 text-cyan-700">
+                    {activeWeekFilter === 'AUTO'
+                      ? monthlyWeekSchedules[todayIso.slice(0, 7)]
+                        ? 'Mode: Otomatis (Sesuai Jadwal Pekan Bulanan)'
+                        : 'Mode: Otomatis (Kalender Mingguan)'
+                      : 'Mode: Dipaksa Manual oleh Admin'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                {/* Opsi 1: Paksa Pekan 10 Produktif 11 Normada */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveWeekFilter('P10_PROD_P11_NORM');
+                    setToastNotification(
+                      'Pekan aktif minggu ini dipaksa ke "Pekan 10 Produktif 11 Normada" untuk seluruh pengguna!'
+                    );
+                  }}
+                  className={`p-4 rounded-2xl border-2 text-left transition cursor-pointer flex flex-col justify-between gap-2 ${
+                    activeWeekFilter === 'P10_PROD_P11_NORM'
+                      ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20 shadow-sm'
+                      : 'bg-white border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-emerald-800">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      PAKSA PEKAN A
+                    </span>
+                    {activeWeekFilter === 'P10_PROD_P11_NORM' && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                        <Check className="w-3 h-3" />
+                        Aktif Dipaksa
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-extrabold text-sm text-slate-900">
+                      Pekan 10 Produktif 11 Normada
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      Memaksa jadwal Kelas 10 memakai sesi Produktif & Kelas 11 memakai sesi Normatif/Adaptif.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Opsi 2: Paksa Pekan 10 Normada 11 Produktif */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveWeekFilter('P10_NORM_P11_PROD');
+                    setToastNotification(
+                      'Pekan aktif minggu ini dipaksa ke "Pekan 10 Normada 11 Produktif" untuk seluruh pengguna!'
+                    );
+                  }}
+                  className={`p-4 rounded-2xl border-2 text-left transition cursor-pointer flex flex-col justify-between gap-2 ${
+                    activeWeekFilter === 'P10_NORM_P11_PROD'
+                      ? 'bg-indigo-50 border-indigo-500 ring-2 ring-indigo-500/20 shadow-sm'
+                      : 'bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-indigo-800">
+                      <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                      PAKSA PEKAN B
+                    </span>
+                    {activeWeekFilter === 'P10_NORM_P11_PROD' && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded-full">
+                        <Check className="w-3 h-3" />
+                        Aktif Dipaksa
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-extrabold text-sm text-slate-900">
+                      Pekan 10 Normada 11 Produktif
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      Memaksa jadwal Kelas 10 memakai sesi Normatif/Adaptif & Kelas 11 memakai sesi Produktif.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Opsi 3: Otomatis (Ikuti Jadwal Bulanan / Kalender) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveWeekFilter('AUTO');
+                    setToastNotification(
+                      'Mode pekan aktif dikembalikan ke Otomatis (mengikuti Jadwal Pekan Bulanan / Kalender).'
+                    );
+                  }}
+                  className={`p-4 rounded-2xl border-2 text-left transition cursor-pointer flex flex-col justify-between gap-2 ${
+                    activeWeekFilter === 'AUTO'
+                      ? 'bg-cyan-50 border-cyan-600 ring-2 ring-cyan-500/20 shadow-sm'
+                      : 'bg-white border-slate-200 hover:border-cyan-300 hover:bg-cyan-50/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-cyan-800">
+                      <CalendarDays className="w-3.5 h-3.5 text-cyan-600" />
+                      MODE OTOMATIS
+                    </span>
+                    {activeWeekFilter === 'AUTO' && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-cyan-700 text-white px-2 py-0.5 rounded-full">
+                        <Check className="w-3 h-3" />
+                        Aktif
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <div className="font-extrabold text-sm text-slate-900">
+                      Ikuti Jadwal Bulanan / Kalender
+                    </div>
+                    <p className="text-[11px] text-slate-600 mt-1">
+                      Mengikuti Jadwal Pekan Bulanan di bawah (atau kalender mingguan jika bulan belum diatur).
+                    </p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* PANEL 2: PENGATURAN JADWAL PEKAN BULANAN (MINGGU PERTAMA S/D PEKAN TERAKHIR) */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-extrabold text-slate-900">
+                      Jadwal Pekan Bulanan ({selectedMonthLabel})
+                    </h2>
+                    {hasSavedMonthPlan ? (
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        Tersimpan di Database
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                        Default Kalender
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Atur pekan yang aktif dari <strong>Minggu Pertama</strong> sampai <strong>Pekan Terakhir</strong> pada bulan terpilih.
+                  </p>
+                </div>
+
+                {/* Month Navigation */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => shiftMonth(-1)}
+                    className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition cursor-pointer"
+                    title="Bulan Sebelumnya"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <input
+                    type="month"
+                    value={selectedMonthKey}
+                    onChange={(e) => {
+                      if (e.target.value) setSelectedMonthKey(e.target.value);
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold bg-white border border-slate-300 rounded-xl text-slate-900 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => shiftMonth(1)}
+                    className="p-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition cursor-pointer"
+                    title="Bulan Berikutnya"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      setSelectedMonthKey(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition cursor-pointer"
+                  >
+                    Bulan Ini
+                  </button>
+                </div>
+              </div>
+
+              {activeWeekFilter !== 'AUTO' && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>
+                      Saat ini mode <strong>Paksa Pekan Aktif</strong> sedang aktif ({getWeekTypeLabel(activeWeekFilter)}). Jadwal bulanan akan otomatis berjalan jika Anda mengembalikan ke <strong>Mode Otomatis</strong>.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveWeekFilter('AUTO');
+                      setToastNotification('Mode pekan aktif dialihkan ke Otomatis mengikuti Jadwal Bulanan.');
+                    }}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] transition cursor-pointer"
+                  >
+                    Aktifkan Mode Otomatis
+                  </button>
+                </div>
+              )}
+
+              {/* Quick Alternating Fill Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="text-xs font-bold text-slate-700">
+                  Isi Cepat Pola Selang-Seling ({draftMonthWeeks.length} Pekan):
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApplyAlternatingPattern('P10_PROD_P11_NORM')}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition cursor-pointer"
+                  >
+                    Minggu 1 Mulai: 10 Prod · 11 Normada
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyAlternatingPattern('P10_NORM_P11_PROD')}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 transition cursor-pointer"
+                  >
+                    Minggu 1 Mulai: 10 Normada · 11 Prod
+                  </button>
+                </div>
+              </div>
+
+              {/* Daftar Pekan dalam Bulan */}
+              <div className="space-y-2.5">
+                {draftMonthWeeks.map((week) => {
+                  const isCurrentWeek = week.startDate <= todayIso && todayIso <= week.endDate;
+                  return (
+                    <div
+                      key={week.weekNumber}
+                      className={`p-3.5 sm:p-4 rounded-2xl border flex flex-col lg:flex-row lg:items-center justify-between gap-3 transition ${
+                        isCurrentWeek
+                          ? 'bg-cyan-50/40 border-cyan-300 shadow-2xs'
+                          : 'bg-white border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-extrabold text-sm text-slate-900">
+                            {week.label}
+                          </span>
+                          {isCurrentWeek && (
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-cyan-600 text-white">
+                              Minggu Berjalan Sekarang
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 font-medium flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          <span>
+                            {formatShortIndoDate(week.startDate)} s/d {formatShortIndoDate(week.endDate)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateDraftWeek(week.weekNumber, 'P10_PROD_P11_NORM')}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                            week.weekType === 'P10_PROD_P11_NORM'
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-emerald-50'
+                          }`}
+                        >
+                          {week.weekType === 'P10_PROD_P11_NORM' && <Check className="w-3.5 h-3.5" />}
+                          <span>Pekan 10 Produktif 11 Normada</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateDraftWeek(week.weekNumber, 'P10_NORM_P11_PROD')}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                            week.weekType === 'P10_NORM_P11_PROD'
+                              ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-indigo-50'
+                          }`}
+                        >
+                          {week.weekType === 'P10_NORM_P11_PROD' && <Check className="w-3.5 h-3.5" />}
+                          <span>Pekan 10 Normada 11 Produktif</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Action Footer */}
+              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                {hasSavedMonthPlan ? (
+                  <button
+                    type="button"
+                    onClick={handleClearMonthlyPlan}
+                    className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Pengaturan {selectedMonthLabel}</span>
+                  </button>
+                ) : (
+                  <span className="text-xs text-slate-500">
+                    Klik simpan untuk memberlakukan jadwal pekan bulanan ke database.
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleSaveMonthlyPlan}
+                  className="px-5 py-2.5 bg-[#0B1E2E] hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer flex items-center gap-2"
+                >
+                  <Save className="w-4 h-4 text-emerald-400" />
+                  <span>Simpan Jadwal Pekan {selectedMonthLabel}</span>
+                </button>
+              </div>
             </div>
           </div>
         );
@@ -4118,36 +4590,39 @@ export const DataMasterView: React.FC = () => {
         </div>
       )}
 
-      {/* MODAL: HAPUS MASAL (BULK DELETE) */}
-      <BulkDeleteMasterModal
-        isOpen={isBulkDeleteModalOpen}
-        onClose={() => setIsBulkDeleteModalOpen(false)}
-        activeTab={activeTab}
-        selectedCount={selectedIds.length}
-        selectedItemsPreview={getSelectedItemsPreview()}
-        onConfirm={handleBulkDeleteConfirm}
-      />
+      {/* MODAL: HAPUS MASAL (BULK DELETE) & EDIT MASAL (BULK EDIT) */}
+      {activeTab !== 'rotasi_pekan' && (
+        <>
+          <BulkDeleteMasterModal
+            isOpen={isBulkDeleteModalOpen}
+            onClose={() => setIsBulkDeleteModalOpen(false)}
+            activeTab={activeTab}
+            selectedCount={selectedIds.length}
+            selectedItemsPreview={getSelectedItemsPreview()}
+            onConfirm={handleBulkDeleteConfirm}
+          />
 
-      {/* MODAL: EDIT MASAL (BULK EDIT) */}
-      <BulkEditMasterModal
-        isOpen={isBulkEditModalOpen}
-        onClose={() => setIsBulkEditModalOpen(false)}
-        activeTab={activeTab}
-        selectedCount={selectedIds.length}
-        teachers={teachers}
-        subjects={subjects}
-        classes={classes}
-        rooms={rooms}
-        departments={departments}
-        academicYears={academicYears}
-        onApplyGuru={handleApplyBulkGuru}
-        onApplyMapel={handleApplyBulkMapel}
-        onApplyJurusan={handleApplyBulkJurusan}
-        onApplyKelas={handleApplyBulkKelas}
-        onApplyRuang={handleApplyBulkRuang}
-        onApplyTahunPelajaran={handleApplyBulkTahunPelajaran}
-        onApplyJadwal={handleApplyBulkJadwal}
-      />
+          <BulkEditMasterModal
+            isOpen={isBulkEditModalOpen}
+            onClose={() => setIsBulkEditModalOpen(false)}
+            activeTab={activeTab}
+            selectedCount={selectedIds.length}
+            teachers={teachers}
+            subjects={subjects}
+            classes={classes}
+            rooms={rooms}
+            departments={departments}
+            academicYears={academicYears}
+            onApplyGuru={handleApplyBulkGuru}
+            onApplyMapel={handleApplyBulkMapel}
+            onApplyJurusan={handleApplyBulkJurusan}
+            onApplyKelas={handleApplyBulkKelas}
+            onApplyRuang={handleApplyBulkRuang}
+            onApplyTahunPelajaran={handleApplyBulkTahunPelajaran}
+            onApplyJadwal={handleApplyBulkJadwal}
+          />
+        </>
+      )}
     </div>
   );
 };

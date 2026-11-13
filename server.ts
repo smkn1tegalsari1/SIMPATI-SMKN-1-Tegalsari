@@ -35,6 +35,7 @@ function getInitialStore() {
     userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
     journals: [],
     activeWeekFilter: 'AUTO',
+    monthlyWeekSchedules: {},
     lastUpdated: Date.now(),
     lastUpdatedBy: 'System',
   };
@@ -61,6 +62,7 @@ function loadStore() {
         if (!Array.isArray(inMemoryStore.schedules)) inMemoryStore.schedules = [];
         if (!inMemoryStore.attendanceRecords || typeof inMemoryStore.attendanceRecords !== 'object') inMemoryStore.attendanceRecords = {};
         if (!Array.isArray(inMemoryStore.journals)) inMemoryStore.journals = [];
+        if (!inMemoryStore.monthlyWeekSchedules || typeof inMemoryStore.monthlyWeekSchedules !== 'object') inMemoryStore.monthlyWeekSchedules = {};
       }
     } else {
       inMemoryStore = getInitialStore();
@@ -198,6 +200,7 @@ async function startServer() {
             )
           ),
           activeWeekFilter: 'AUTO',
+          monthlyWeekSchedules: {},
           lastUpdated: Date.now(),
           lastUpdatedBy: updatedBy || 'Admin',
         };

@@ -13,7 +13,7 @@ import { useApp } from '../../context/AppContext';
 import { ScheduleWeekType, TeachingJournal } from '../../types';
 import { PERIOD_TIMES } from '../../data/initialData';
 import {
-  getWeekRotationFromDate,
+  resolveWeekRotationForDate,
   getWeekTypeLabel,
   getWeekTypeShortLabel,
 } from '../../data/scheduleWeeks';
@@ -58,6 +58,7 @@ export const TambahJurnalModal: React.FC<TambahJurnalModalProps> = ({
     currentUser,
     activeWeekFilter,
     effectiveWeekType,
+    monthlyWeekSchedules,
     addJournal,
     updateJournal,
   } = useApp();
@@ -157,8 +158,8 @@ export const TambahJurnalModal: React.FC<TambahJurnalModalProps> = ({
     if (date === todayIso && activeWeekFilter !== 'AUTO') {
       return effectiveWeekType;
     }
-    return getWeekRotationFromDate(currentDayInfo.dateObj);
-  }, [weekMode, date, getTodayISO, activeWeekFilter, effectiveWeekType, currentDayInfo]);
+    return resolveWeekRotationForDate(currentDayInfo.dateObj, monthlyWeekSchedules);
+  }, [weekMode, date, getTodayISO, activeWeekFilter, effectiveWeekType, currentDayInfo, monthlyWeekSchedules]);
 
   // 2. Ambil jadwal mengajar guru pada tanggal/hari & pekan mingguan yang dipilih
   const scheduledSessionsOnDate: ScheduledSession[] = useMemo(() => {

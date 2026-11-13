@@ -23,7 +23,7 @@ import { ScheduleWeekType, TeachingJournal } from '../../types';
 import { TambahJurnalModal, JournalWeekFilterMode } from './TambahJurnalModal';
 import { PERIOD_TIMES } from '../../data/initialData';
 import {
-  getWeekRotationFromDate,
+  resolveWeekRotationForDate,
   getWeekTypeLabel,
   getWeekTypeShortLabel,
   isScheduleMatchingWeek,
@@ -93,6 +93,7 @@ export const JurnalMengajarView: React.FC = () => {
     currentDayName,
     realtimeWeekType,
     effectiveWeekType,
+    monthlyWeekSchedules,
   } = useApp();
 
   // Resolusi data guru milik akun login jika role guru
@@ -404,7 +405,7 @@ export const JurnalMengajarView: React.FC = () => {
             parseInt(parts[1], 10) - 1,
             parseInt(parts[2], 10)
           );
-          if (getWeekRotationFromDate(dObj) !== filterJournalWeek) {
+          if (resolveWeekRotationForDate(dObj, monthlyWeekSchedules) !== filterJournalWeek) {
             return false;
           }
         }
@@ -438,6 +439,7 @@ export const JurnalMengajarView: React.FC = () => {
     searchTerm,
     todayISO,
     teachers,
+    monthlyWeekSchedules,
   ]);
 
   // Statistik Jurnal
@@ -1110,7 +1112,7 @@ export const JurnalMengajarView: React.FC = () => {
                       parseInt(parts[1], 10) - 1,
                       parseInt(parts[2], 10)
                     );
-                    journalWeekType = getWeekRotationFromDate(dObj);
+                    journalWeekType = resolveWeekRotationForDate(dObj, monthlyWeekSchedules);
                     journalWeekLabel = getWeekTypeShortLabel(journalWeekType);
                   }
 

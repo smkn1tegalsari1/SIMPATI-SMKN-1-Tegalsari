@@ -17,6 +17,8 @@ import {
   ScheduleWeekType,
   ScheduleLessonStatus,
   TeachingJournal,
+  MonthlyWeekEntry,
+  MonthlyWeekSchedulesMap,
 } from '../types';
 import {
   INITIAL_TEACHERS,
@@ -35,6 +37,7 @@ import {
 import { Department, AcademicYear } from '../types';
 import {
   getWeekRotationFromDate,
+  resolveWeekRotationForDate,
   getWeekTypeLabel,
   getWeekTypeShortLabel,
   isScheduleMatchingWeek,
@@ -93,7 +96,10 @@ interface AppContextType {
   realtimeWeekType: 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD';
   activeWeekFilter: 'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL';
   effectiveWeekType: 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL';
+  monthlyWeekSchedules: MonthlyWeekSchedulesMap;
   setActiveWeekFilter: (w: 'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL') => void;
+  setMonthlyWeekPlan: (monthKey: string, entries: MonthlyWeekEntry[]) => void;
+  clearMonthlyWeekPlan: (monthKey: string) => void;
   getWeekTypeLabel: (w?: string) => string;
   getWeekTypeShortLabel: (w?: string) => string;
   isScheduleMatchingCurrentWeek: (item: ScheduleItem) => boolean;
@@ -447,6 +453,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return [];
   });
 
+  const [monthlyWeekSchedules, setMonthlyWeekSchedules] = useState<MonthlyWeekSchedulesMap>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_monthly_weeks`);
+    if (saved !== null) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  });
+
   const [clientId] = useState<string>(() => `client_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`);
   const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
   const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
@@ -504,6 +523,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const attendanceRecordsRef = React.useRef<Record<string, AttendanceRecord>>(attendanceRecords);
   const userAccountsRef = React.useRef<UserAccount[]>(userAccounts);
   const journalsRef = React.useRef<TeachingJournal[]>(journals);
+  const monthlyWeekSchedulesRef = React.useRef<MonthlyWeekSchedulesMap>(monthlyWeekSchedules);
   const localMutationVersionRef = React.useRef<number>(0);
 
   const pendingServerPatchRef = React.useRef<Record<string, any>>({});
@@ -614,9 +634,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return `${h}.${m}.${s} WIB`;
   });
 
-  // Rotasi Pekan Mingguan SMK (Real-Time sesuai Waktu Kalender Laptop)
+  // Rotasi Pekan Mingguan SMK (Mengikuti Jadwal Pekan Bulanan dari Admin atau Kalender Laptop)
   const [realtimeWeekType, setRealtimeWeekType] = useState<'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD'>(() =>
-    getWeekRotationFromDate(new Date())
+    resolveWeekRotationForDate(new Date(), monthlyWeekSchedules)
   );
 
   const [activeWeekFilter, setActiveWeekFilterState] = useState<'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>(() => {
@@ -625,8 +645,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const setActiveWeekFilter = (w: 'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL') => {
+    localMutationVersionRef.current += 1;
     setActiveWeekFilterState(w);
-    localStorage.setItem(`${STORAGE_KEY}_week_filter`, w);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_week_filter`, w);
+    } catch (e) {}
+    syncToServer('activeWeekFilter', w);
+    syncToCloud({ activeWeekFilter: w });
+  };
+
+  const setMonthlyWeekPlan = (monthKey: string, entries: MonthlyWeekEntry[]) => {
+    const nextMap: MonthlyWeekSchedulesMap = stripUndefined({
+      ...monthlyWeekSchedulesRef.current,
+      [monthKey]: entries,
+    });
+    monthlyWeekSchedulesRef.current = nextMap;
+    localMutationVersionRef.current += 1;
+    setMonthlyWeekSchedules(nextMap);
+    setRealtimeWeekType(resolveWeekRotationForDate(new Date(), nextMap));
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify(nextMap));
+    } catch (e) {}
+    syncToServer('monthlyWeekSchedules', nextMap);
+    syncToCloud({ monthlyWeekSchedules: nextMap });
+  };
+
+  const clearMonthlyWeekPlan = (monthKey: string) => {
+    const nextMap: MonthlyWeekSchedulesMap = { ...monthlyWeekSchedulesRef.current };
+    delete nextMap[monthKey];
+    monthlyWeekSchedulesRef.current = nextMap;
+    localMutationVersionRef.current += 1;
+    setMonthlyWeekSchedules(nextMap);
+    setRealtimeWeekType(resolveWeekRotationForDate(new Date(), nextMap));
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify(nextMap));
+    } catch (e) {}
+    syncToServer('monthlyWeekSchedules', nextMap);
+    syncToCloud({ monthlyWeekSchedules: nextMap });
   };
 
   const effectiveWeekType = activeWeekFilter === 'AUTO' ? realtimeWeekType : activeWeekFilter;
@@ -822,6 +877,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setJournals(s.journals);
       try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(s.journals)); } catch (e) {}
     }
+    if (s.monthlyWeekSchedules && typeof s.monthlyWeekSchedules === 'object' && !Array.isArray(s.monthlyWeekSchedules)) {
+      monthlyWeekSchedulesRef.current = s.monthlyWeekSchedules;
+      setMonthlyWeekSchedules(s.monthlyWeekSchedules);
+      setRealtimeWeekType(resolveWeekRotationForDate(new Date(), s.monthlyWeekSchedules));
+      try { localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify(s.monthlyWeekSchedules)); } catch (e) {}
+    }
     if (s.activeWeekFilter) {
       setActiveWeekFilterState(s.activeWeekFilter);
       try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {}
@@ -953,6 +1014,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
               journals: [],
               activeWeekFilter: 'AUTO',
+              monthlyWeekSchedules: {},
               lastUpdated: Date.now(),
               lastUpdatedBy: 'System Fresh Init',
             };
@@ -977,6 +1039,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
               journals: [],
               activeWeekFilter: 'AUTO',
+              monthlyWeekSchedules: {},
               lastUpdated: Date.now(),
               lastUpdatedBy: 'System Fresh Init',
             };
@@ -1027,6 +1090,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             else if (key === 'journals' && Array.isArray(data)) { journalsRef.current = data; setJournals(data); try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data)); } catch (e) {} }
             else if (key === 'activeWeekFilter' && typeof data === 'string') { setActiveWeekFilterState(data as any); try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, data); } catch (e) {} }
+            else if (key === 'monthlyWeekSchedules' && typeof data === 'object' && data !== null) {
+              monthlyWeekSchedulesRef.current = data;
+              setMonthlyWeekSchedules(data);
+              setRealtimeWeekType(resolveWeekRotationForDate(new Date(), data));
+              try { localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify(data)); } catch (e) {}
+            }
           }
         } catch (e) {
           console.error('[SIMPATI SSE] Parse error:', e);
@@ -1063,7 +1132,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const d = now.getDay();
       setCurrentDayIndex(d === 0 ? 7 : d);
 
-      const currentWeekRot = getWeekRotationFromDate(now);
+      const currentWeekRot = resolveWeekRotationForDate(now, monthlyWeekSchedulesRef.current);
       setRealtimeWeekType(currentWeekRot);
 
       if (!isSimulatedTime) {
@@ -2026,6 +2095,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         journals: [],
         userAccounts: preservedAccounts,
         activeWeekFilter: 'AUTO',
+        monthlyWeekSchedules: {},
         lastUpdated: Date.now(),
         lastUpdatedBy: currentUser.name || 'Admin SIMPATI',
       };
@@ -2040,6 +2110,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       attendanceRecordsRef.current = {};
       journalsRef.current = [];
       userAccountsRef.current = preservedAccounts;
+      monthlyWeekSchedulesRef.current = {};
       localMutationVersionRef.current += 1;
 
       setTeachers([]);
@@ -2052,6 +2123,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setAttendanceRecords({});
       setJournals([]);
       setUserAccounts(preservedAccounts);
+      setActiveWeekFilterState('AUTO');
+      setMonthlyWeekSchedules({});
 
       try {
         localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify([]));
@@ -2064,6 +2137,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify({}));
         localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify([]));
         localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(preservedAccounts));
+        localStorage.setItem(`${STORAGE_KEY}_week_filter`, 'AUTO');
+        localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify({}));
       } catch (e) {}
 
       fetch('/api/reset', {
@@ -2113,6 +2188,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       journals: [],
       userAccounts: freshAccounts,
       activeWeekFilter: 'AUTO',
+      monthlyWeekSchedules: {},
       lastUpdated: Date.now(),
       lastUpdatedBy: currentUser.name || 'Admin',
     };
@@ -2135,6 +2211,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     attendanceRecordsRef.current = {};
     journalsRef.current = [];
     userAccountsRef.current = freshAccounts;
+    monthlyWeekSchedulesRef.current = {};
     localMutationVersionRef.current += 1;
 
     setTeachers([]);
@@ -2147,6 +2224,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAttendanceRecords({});
     setJournals([]);
     setUserAccounts(freshAccounts);
+    setActiveWeekFilterState('AUTO');
+    setMonthlyWeekSchedules({});
     setCurrentPeriod(1);
     setIsSimulatedTime(false);
 
@@ -2161,6 +2240,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify({}));
       localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify([]));
       localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(freshAccounts));
+      localStorage.setItem(`${STORAGE_KEY}_week_filter`, 'AUTO');
+      localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify({}));
     } catch (e) {}
 
     try {
@@ -2238,7 +2319,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         realtimeWeekType,
         activeWeekFilter,
         effectiveWeekType,
+        monthlyWeekSchedules,
         setActiveWeekFilter,
+        setMonthlyWeekPlan,
+        clearMonthlyWeekPlan,
         getWeekTypeLabel,
         getWeekTypeShortLabel,
         isScheduleMatchingCurrentWeek,

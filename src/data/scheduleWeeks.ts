@@ -1,4 +1,4 @@
-import { ScheduleWeekType } from '../types';
+import { ActiveWeekRotationType, MonthlyWeekEntry, MonthlyWeekSchedulesMap, ScheduleWeekType } from '../types';
 
 export interface WeekRotationInfo {
   id: ScheduleWeekType;
@@ -124,3 +124,86 @@ export const isScheduleMatchingWeek = (
 
   return scheduleWeek === target;
 };
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+export const toLocalDateISO = (d: Date): string =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/**
+ * Menghasilkan daftar pekan (Pekan Pertama s/d Pekan Terakhir) pada bulan kalender tertentu (YYYY-MM).
+ */
+export const getMonthWeeks = (
+  year: number,
+  monthIndex0: number,
+  existingEntries?: MonthlyWeekEntry[]
+): MonthlyWeekEntry[] => {
+  const daysInMonth = new Date(year, monthIndex0 + 1, 0).getDate();
+  const rawChunks: Array<{ startDay: number; endDay: number }> = [];
+
+  let day = 1;
+  while (day <= daysInMonth) {
+    const startDay = day;
+    let endDay = day;
+    while (endDay < daysInMonth && new Date(year, monthIndex0, endDay).getDay() !== 0) {
+      endDay++;
+    }
+    rawChunks.push({ startDay, endDay });
+    day = endDay + 1;
+  }
+
+  // Jika hari ke-1 adalah hari Minggu saja, gabungkan dengan pekan sekolah pertama agar setiap pekan memiliki hari sekolah efektif
+  if (
+    rawChunks.length > 1 &&
+    rawChunks[0].startDay === 1 &&
+    rawChunks[0].endDay === 1 &&
+    new Date(year, monthIndex0, 1).getDay() === 0
+  ) {
+    rawChunks[1].startDay = 1;
+    rawChunks.shift();
+  }
+
+  return rawChunks.map((chunk, idx) => {
+    const weekNumber = idx + 1;
+    const startDate = `${year}-${pad2(monthIndex0 + 1)}-${pad2(chunk.startDay)}`;
+    const endDate = `${year}-${pad2(monthIndex0 + 1)}-${pad2(chunk.endDay)}`;
+    const existing = existingEntries?.find((e) => e.weekNumber === weekNumber);
+    const midDate = new Date(year, monthIndex0, Math.min(chunk.startDay + 1, chunk.endDay));
+    const defaultType: ActiveWeekRotationType = getWeekRotationFromDate(midDate);
+
+    let label = `Pekan ${weekNumber}`;
+    if (idx === 0) label = `Pekan 1 (Minggu Pertama)`;
+    else if (idx === rawChunks.length - 1) label = `Pekan ${weekNumber} (Pekan Terakhir)`;
+
+    return {
+      weekNumber,
+      label,
+      startDate,
+      endDate,
+      weekType: existing?.weekType || defaultType,
+    };
+  });
+};
+
+/**
+ * Menentukan jenis pekan aktif untuk tanggal tertentu dengan memprioritaskan Jadwal Pekan Bulanan dari Admin,
+ * lalu fallback ke rotasi kalender otomatis.
+ */
+export const resolveWeekRotationForDate = (
+  d: Date = new Date(),
+  monthlyWeekSchedules?: MonthlyWeekSchedulesMap
+): ActiveWeekRotationType => {
+  if (monthlyWeekSchedules) {
+    const iso = toLocalDateISO(d);
+    const monthKey = iso.slice(0, 7);
+    const monthPlan = monthlyWeekSchedules[monthKey];
+    if (Array.isArray(monthPlan) && monthPlan.length > 0) {
+      const matched = monthPlan.find((w) => w.startDate <= iso && iso <= w.endDate);
+      if (matched && (matched.weekType === 'P10_PROD_P11_NORM' || matched.weekType === 'P10_NORM_P11_PROD')) {
+        return matched.weekType;
+      }
+    }
+  }
+  return getWeekRotationFromDate(d);
+};
+

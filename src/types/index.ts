@@ -86,6 +86,18 @@ export type ScheduleWeekType =
   | 'P10_NORM_P11_PROD' // Pekan Kelas 10 Normatif Adaptif dan Kelas 11 Produktif
   | 'ALL'; // Berlaku Semua Pekan / Rutin Tiap Minggu
 
+export type ActiveWeekRotationType = 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD';
+
+export interface MonthlyWeekEntry {
+  weekNumber: number;
+  label: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  weekType: ActiveWeekRotationType;
+}
+
+export type MonthlyWeekSchedulesMap = Record<string, MonthlyWeekEntry[]>; // key: "YYYY-MM"
+
 export type ScheduleLessonStatus = 'Berlangsung' | 'Selesai' | 'Terjadwal';
 
 export type TeacherAttendanceStatus =
