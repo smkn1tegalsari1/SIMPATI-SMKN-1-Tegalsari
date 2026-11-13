@@ -603,6 +603,7 @@ export const PembelajaranSayaView: React.FC = () => {
           setJournalDraft(null);
         }}
         journalToEdit={journalDraft}
+        initialWeekMode={selectedWeek === 'ACTIVE' ? 'AUTO' : selectedWeek}
       />
 
       {/* Modal Edit Akun & Password Guru Sendiri */}
