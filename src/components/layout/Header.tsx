@@ -23,6 +23,8 @@ export const Header: React.FC<HeaderProps> = () => {
     setActiveWeekFilter,
     getWeekTypeShortLabel,
     isServerConnected,
+    isCloudConnected,
+    cloudSyncError,
     logout,
   } = useApp();
 
@@ -111,25 +113,43 @@ export const Header: React.FC<HeaderProps> = () => {
           </div>
         </div>
 
-        {/* Server Sync Indicator */}
+        {/* Cloud & Server Sync Indicator */}
         <div
           className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-            isServerConnected
+            cloudSyncError
+              ? 'bg-rose-50 text-rose-800 border-rose-300'
+              : isCloudConnected
               ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
               : 'bg-amber-50 text-amber-800 border-amber-300'
           }`}
           title={
-            isServerConnected
-              ? 'Terhubung ke server terpusat. Semua perubahan admin, guru, & piket tersinkron otomatis secara real-time.'
-              : 'Menghubungkan ke server terpusat...'
+            cloudSyncError
+              ? `Sinkronisasi Cloud Firestore bermasalah: ${cloudSyncError}`
+              : isCloudConnected
+              ? 'Tersambung ke Cloud Firestore terpusat & server real-time. Semua perubahan tersimpan aman di online.'
+              : isServerConnected
+              ? 'Terhubung ke server lokal, sedang menyambungkan ke Cloud Firestore...'
+              : 'Menghubungkan ke database Cloud Firestore...'
           }
         >
           <span
             className={`w-2 h-2 rounded-full ${
-              isServerConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              cloudSyncError
+                ? 'bg-rose-500'
+                : isCloudConnected
+                ? 'bg-emerald-500 animate-pulse'
+                : 'bg-amber-500'
             }`}
           />
-          <span>{isServerConnected ? 'Server Sinkron' : 'Menghubungkan...'}</span>
+          <span>
+            {cloudSyncError
+              ? 'Cloud Error'
+              : isCloudConnected
+              ? 'Cloud Aktif'
+              : isServerConnected
+              ? 'Server Lokal'
+              : 'Menghubungkan...'}
+          </span>
         </div>
 
         {/* Current Active User Profile Badge & Edit Account Button */}

@@ -51,6 +51,8 @@
   ],
   "journals": [],
   "activeWeekFilter": "AUTO",
-  "lastUpdated": 1794547648685,
-  "lastUpdatedBy": "System Reset"
+  "monthlyWeekSchedules": {},
+  "lastUpdated": 0,
+  "lastUpdatedBy": "System Reset",
+  "isInitialEmpty": true
 }

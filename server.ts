@@ -8,6 +8,10 @@ import {
   INITIAL_USER_ACCOUNTS,
   ensureDefaultAccounts,
 } from './src/data/initialData';
+import {
+  hasMeaningfulSchoolData,
+  isSystemPlaceholderStore,
+} from './src/data/storeSync';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,7 +25,7 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Inisialisasi struktur data bersih (seperti baru) jika file belum ada
+// Inisialisasi struktur data bersih tanpa timestamp palsu agar TIDAK PERNAH menimpa Cloud Firestore
 function getInitialStore() {
   return {
     teachers: [],
@@ -36,8 +40,9 @@ function getInitialStore() {
     journals: [],
     activeWeekFilter: 'AUTO',
     monthlyWeekSchedules: {},
-    lastUpdated: Date.now(),
+    lastUpdated: 0,
     lastUpdatedBy: 'System',
+    isInitialEmpty: true,
   };
 }
 
@@ -63,6 +68,12 @@ function loadStore() {
         if (!inMemoryStore.attendanceRecords || typeof inMemoryStore.attendanceRecords !== 'object') inMemoryStore.attendanceRecords = {};
         if (!Array.isArray(inMemoryStore.journals)) inMemoryStore.journals = [];
         if (!inMemoryStore.monthlyWeekSchedules || typeof inMemoryStore.monthlyWeekSchedules !== 'object') inMemoryStore.monthlyWeekSchedules = {};
+
+        // Jika file lokal hanyalah placeholder kosong bawaan container/reset lama, nol-kan timestampnya
+        if (!hasMeaningfulSchoolData(inMemoryStore) && isSystemPlaceholderStore(inMemoryStore)) {
+          inMemoryStore.lastUpdated = 0;
+          inMemoryStore.isInitialEmpty = true;
+        }
       }
     } else {
       inMemoryStore = getInitialStore();
@@ -127,26 +138,32 @@ async function startServer() {
     res.json({
       success: true,
       data: inMemoryStore,
-      lastUpdated: inMemoryStore?.lastUpdated || Date.now(),
+      lastUpdated: typeof inMemoryStore?.lastUpdated === 'number' ? inMemoryStore.lastUpdated : 0,
     });
   });
 
-  // 3. Endpoint POST /api/sync: Simpan pembaruan data dari admin mana pun
+  // 3. Endpoint POST /api/sync: Simpan pembaruan data dari admin atau hidrasi Cloud Firestore
   app.post('/api/sync', (req, res) => {
     try {
-      const { key, data, updatedBy, fullState, clientId } = req.body;
+      const { key, data, updatedBy, fullState, clientId, lastUpdated, skipBroadcast } = req.body;
 
       if (!inMemoryStore) {
         loadStore();
       }
+
+      const incomingTs =
+        typeof lastUpdated === 'number' && lastUpdated >= 0
+          ? lastUpdated
+          : Date.now();
 
       if (fullState) {
         inMemoryStore = {
           ...inMemoryStore,
           ...fullState,
           userAccounts: ensureDefaultAccounts(fullState.userAccounts || inMemoryStore.userAccounts),
-          lastUpdated: Date.now(),
-          lastUpdatedBy: updatedBy || 'Admin',
+          lastUpdated: incomingTs,
+          lastUpdatedBy: updatedBy || fullState.lastUpdatedBy || 'Admin',
+          isInitialEmpty: false,
         };
       } else if (key && data !== undefined) {
         if (key === 'userAccounts') {
@@ -154,20 +171,23 @@ async function startServer() {
         } else {
           inMemoryStore[key] = data;
         }
-        inMemoryStore.lastUpdated = Date.now();
+        inMemoryStore.lastUpdated = incomingTs;
         inMemoryStore.lastUpdatedBy = updatedBy || 'Admin';
+        inMemoryStore.isInitialEmpty = false;
       }
 
       saveStore();
 
-      // Siarkan pembaruan langsung ke semua tab & laptop admin lain secara real-time!
-      broadcastEvent('state_updated', {
-        key,
-        data: key === 'userAccounts' ? inMemoryStore.userAccounts : (key ? data : inMemoryStore),
-        updatedBy: updatedBy || 'Admin',
-        originClientId: clientId,
-        lastUpdated: inMemoryStore.lastUpdated,
-      });
+      if (!skipBroadcast) {
+        // Siarkan pembaruan langsung ke semua tab & laptop admin lain secara real-time
+        broadcastEvent('state_updated', {
+          key,
+          data: key === 'userAccounts' ? inMemoryStore.userAccounts : (key ? data : inMemoryStore),
+          updatedBy: updatedBy || 'Admin',
+          originClientId: clientId,
+          lastUpdated: inMemoryStore.lastUpdated,
+        });
+      }
 
       res.json({
         success: true,
@@ -183,6 +203,7 @@ async function startServer() {
   app.post('/api/reset', (req, res) => {
     try {
       const { type, clientId, updatedBy } = req.body;
+      const now = Date.now();
       if (type === 'empty') {
         inMemoryStore = {
           teachers: [],
@@ -201,13 +222,17 @@ async function startServer() {
           ),
           activeWeekFilter: 'AUTO',
           monthlyWeekSchedules: {},
-          lastUpdated: Date.now(),
+          lastUpdated: now,
           lastUpdatedBy: updatedBy || 'Admin',
+          isInitialEmpty: true,
+          explicitResetAt: now,
         };
       } else {
         inMemoryStore = getInitialStore();
-        inMemoryStore.lastUpdated = Date.now();
+        inMemoryStore.lastUpdated = now;
         inMemoryStore.lastUpdatedBy = updatedBy || 'Admin';
+        inMemoryStore.isInitialEmpty = true;
+        inMemoryStore.explicitResetAt = now;
       }
       saveStore();
 

@@ -123,7 +123,16 @@ export const DataMasterView: React.FC = () => {
     importSchedules,
     importClassSchedules,
     resetAllData,
+    isCloudConnected,
+    cloudSyncError,
+    hasCloudBackup,
+    cloudBackupSummary,
+    createCloudBackup,
+    restoreFromCloudBackup,
   } = useApp();
+
+  const [isBackingUpCloud, setIsBackingUpCloud] = useState(false);
+  const [isRestoringCloud, setIsRestoringCloud] = useState(false);
 
   // Delete Confirmation & In-App Dialog State
   // Delete Confirmation & In-App Dialog State
@@ -1028,6 +1037,18 @@ export const DataMasterView: React.FC = () => {
         </div>
       </div>
 
+      {/* Peringatan Sync Cloud / Status Cadangan Otomatis */}
+      {cloudSyncError && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs text-rose-800">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>
+              <strong>Peringatan Sinkronisasi Cloud:</strong> {cloudSyncError}. Pastikan ukuran data tidak melebihi batas dokumen Cloud atau koneksi internet stabil.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
         <button
@@ -1112,8 +1133,52 @@ export const DataMasterView: React.FC = () => {
           <span>Rotasi Pekan Mingguan</span>
         </button>
 
-        {/* Tombol Pemeliharaan Database: Kosongkan Tab / Kosongkan Seluruh Database */}
-        <div className="ml-auto flex items-center gap-2">
+        {/* Tombol Pemeliharaan Database & Cadangan Cloud */}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {(teachers.length > 0 || classes.length > 0 || schedules.length > 0) && (
+            <button
+              type="button"
+              disabled={isBackingUpCloud}
+              onClick={async () => {
+                setIsBackingUpCloud(true);
+                const ok = await createCloudBackup('Cadangan Manual Admin');
+                setIsBackingUpCloud(false);
+                setToastNotification(
+                  ok
+                    ? 'Cadangan data master & jadwal berhasil disimpan ke Cloud Firestore.'
+                    : 'Gagal menyimpan cadangan Cloud (pastikan data terisi dan koneksi aktif).'
+                );
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-emerald-800 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-xs font-bold rounded-xl transition cursor-pointer disabled:opacity-60"
+              title={isCloudConnected ? 'Simpan cadangan aman di Cloud Firestore (main_store_backup)' : 'Menunggu koneksi Cloud'}
+            >
+              <Save className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden lg:inline">{isBackingUpCloud ? 'Mencadangkan...' : 'Cadangkan Cloud'}</span>
+            </button>
+          )}
+
+          {hasCloudBackup && (
+            <button
+              type="button"
+              disabled={isRestoringCloud}
+              onClick={async () => {
+                setIsRestoringCloud(true);
+                const res = await restoreFromCloudBackup();
+                setIsRestoringCloud(false);
+                setToastNotification(res.message);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-cyan-800 hover:text-cyan-900 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 text-xs font-bold rounded-xl transition cursor-pointer disabled:opacity-60"
+              title={
+                cloudBackupSummary
+                  ? `Pulihkan cadangan Cloud (${cloudBackupSummary.teachersCount} guru, ${cloudBackupSummary.classesCount} kelas, ${cloudBackupSummary.schedulesCount} jadwal)`
+                  : 'Pulihkan data dari cadangan Cloud Firestore'
+              }
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-cyan-700" />
+              <span className="hidden lg:inline">{isRestoringCloud ? 'Memulihkan...' : 'Pulihkan Cadangan Cloud'}</span>
+            </button>
+          )}
+
           {activeTab !== 'rotasi_pekan' && (
             <button
               onClick={() => {

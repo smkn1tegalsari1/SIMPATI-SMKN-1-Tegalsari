@@ -50,8 +50,12 @@ import {
   SEED_ROOMS,
   SEED_SCHEDULES,
 } from '../data/masterSeedData';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, setDoc, onSnapshot } from 'firebase/firestore';
 import { db, testFirestoreConnection } from '../lib/firebase';
+import {
+  hasMeaningfulSchoolData,
+  pickAuthoritativeStore,
+} from '../data/storeSync';
 
 export interface StatsSummary {
   totalJadwal: number;
@@ -80,6 +84,15 @@ interface AppContextType {
   isAuthenticated: boolean;
   isServerConnected: boolean;
   isCloudConnected: boolean;
+  cloudSyncError: string | null;
+  hasCloudBackup: boolean;
+  cloudBackupSummary: {
+    backedUpAt?: number;
+    backedUpBy?: string;
+    teachersCount: number;
+    classesCount: number;
+    schedulesCount: number;
+  } | null;
   logout: () => void;
   activeMenu: ActiveMenu;
   currentPeriod: number;
@@ -198,6 +211,8 @@ interface AppContextType {
   // Sinkronisasi Database Terpusat
   refreshFromServer: () => Promise<void>;
   seedDatabaseFromPreset: () => Promise<boolean>;
+  createCloudBackup: (reason?: string) => Promise<boolean>;
+  restoreFromCloudBackup: () => Promise<{ success: boolean; message: string }>;
 }
 
 // Helper Tanggal, Hari & Waktu Real-Time Bahasa Indonesia sesuai Waktu Laptop
@@ -469,6 +484,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [clientId] = useState<string>(() => `client_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`);
   const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
   const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [hasCloudBackup, setHasCloudBackup] = useState<boolean>(false);
+  const [cloudBackupSummary, setCloudBackupSummary] = useState<{
+    backedUpAt?: number;
+    backedUpBy?: string;
+    teachersCount: number;
+    classesCount: number;
+    schedulesCount: number;
+  } | null>(null);
   const isRemoteUpdatingRef = React.useRef<boolean>(false);
   const isInitialMount = React.useRef<boolean>(true);
 
@@ -553,11 +577,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 data: serverPatch[serverKeys[0]],
                 updatedBy: updatedByName,
                 clientId,
+                lastUpdated: mutationTs,
               }
             : {
                 fullState: serverPatch,
                 updatedBy: updatedByName,
                 clientId,
+                lastUpdated: mutationTs,
               };
 
         fetch('/api/sync', {
@@ -575,6 +601,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           lastUpdated: mutationTs,
           lastUpdatedBy: updatedByName,
           lastUpdatedByClientId: clientId,
+          isInitialEmpty: false,
         });
         setDoc(
           doc(db, 'simpati_data', 'main_store'),
@@ -583,15 +610,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         )
           .then(() => {
             setIsCloudConnected(true);
+            setCloudSyncError(null);
           })
           .catch((err) => {
-            console.warn('[SIMPATI Cloud] Gagal sinkronisasi data ke Firestore:', err);
+            console.error('[SIMPATI Cloud] Gagal sinkronisasi data ke Firestore:', err);
+            setIsCloudConnected(false);
+            setCloudSyncError(err?.message || 'Gagal menyimpan ke Cloud Firestore');
           });
       }
     });
   };
 
-  const syncToServer = async (key: string, data: any) => {
+  const syncToServer = async (key: string, data: any, options?: { lastUpdated?: number; skipBroadcast?: boolean }) => {
     if (key === 'fullState' && data && typeof data === 'object') {
       pendingServerPatchRef.current = {
         ...pendingServerPatchRef.current,
@@ -599,6 +629,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     } else {
       pendingServerPatchRef.current[key] = stripUndefined(data);
+    }
+    if (options?.lastUpdated !== undefined) {
+      // Hidrasi dari Cloud ke server container tidak boleh menaikkan lastLocalMutationAtRef seolah-olah mutasi baru
+      fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullState: stripUndefined(data),
+          updatedBy: data?.lastUpdatedBy || 'Cloud Sync',
+          clientId,
+          lastUpdated: options.lastUpdated,
+          skipBroadcast: options.skipBroadcast ?? true,
+        }),
+      }).catch(() => {});
+      pendingServerPatchRef.current = {};
+      return;
     }
     lastLocalMutationAtRef.current = Date.now();
     scheduleSyncFlush();
@@ -612,6 +658,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     lastLocalMutationAtRef.current = Date.now();
     scheduleSyncFlush();
+  };
+
+  // Helper backup otomatis ke simpati_data/main_store_backup jika state saat ini berisi data nyata
+  const createCloudBackup = async (reason = 'Backup Otomatis'): Promise<boolean> => {
+    try {
+      const snapshotPayload = stripUndefined({
+        teachers: teachersRef.current,
+        subjects: subjectsRef.current,
+        classes: classesRef.current,
+        departments: departmentsRef.current,
+        rooms: roomsRef.current,
+        academicYears: academicYearsRef.current,
+        schedules: schedulesRef.current,
+        attendanceRecords: attendanceRecordsRef.current,
+        userAccounts: ensureDefaultAccounts(userAccountsRef.current),
+        journals: journalsRef.current,
+        activeWeekFilter,
+        monthlyWeekSchedules: monthlyWeekSchedulesRef.current,
+        backedUpAt: Date.now(),
+        backedUpBy: currentUser.name || 'Sistem SIMPATI',
+        backupReason: reason,
+      });
+
+      if (!hasMeaningfulSchoolData(snapshotPayload)) {
+        return false;
+      }
+
+      const approxBytes = new TextEncoder().encode(JSON.stringify(snapshotPayload)).length;
+      if (approxBytes > 950_000) {
+        console.warn('[SIMPATI Cloud Backup] Ukuran snapshot mendekati batas dokumen Firestore:', approxBytes);
+        return false;
+      }
+
+      await setDoc(doc(db, 'simpati_data', 'main_store_backup'), snapshotPayload);
+      setHasCloudBackup(true);
+      setCloudBackupSummary({
+        backedUpAt: snapshotPayload.backedUpAt,
+        backedUpBy: snapshotPayload.backedUpBy,
+        teachersCount: snapshotPayload.teachers.length,
+        classesCount: snapshotPayload.classes.length,
+        schedulesCount: snapshotPayload.schedules.length,
+      });
+      return true;
+    } catch (err) {
+      console.warn('[SIMPATI Cloud Backup] Gagal membuat cadangan cloud:', err);
+      return false;
+    }
+  };
+
+  const restoreFromCloudBackup = async (): Promise<{ success: boolean; message: string }> => {
+    try {
+      let backupSnap;
+      try {
+        backupSnap = await getDocFromServer(doc(db, 'simpati_data', 'main_store_backup'));
+      } catch {
+        backupSnap = await getDoc(doc(db, 'simpati_data', 'main_store_backup'));
+      }
+      if (!backupSnap.exists()) {
+        return {
+          success: false,
+          message: 'Tidak ada cadangan Cloud ditemukan pada dokumen main_store_backup.',
+        };
+      }
+      const backupData = backupSnap.data();
+      if (!hasMeaningfulSchoolData(backupData)) {
+        return {
+          success: false,
+          message: 'Dokumen cadangan Cloud tidak berisi data master/jadwal yang dapat dipulihkan.',
+        };
+      }
+
+      const now = Date.now();
+      const restoredStore = stripUndefined({
+        teachers: Array.isArray(backupData.teachers) ? backupData.teachers : [],
+        subjects: Array.isArray(backupData.subjects) ? backupData.subjects : [],
+        classes: Array.isArray(backupData.classes) ? backupData.classes : [],
+        departments: Array.isArray(backupData.departments) ? backupData.departments : [],
+        rooms: Array.isArray(backupData.rooms) ? backupData.rooms : [],
+        academicYears: Array.isArray(backupData.academicYears) && backupData.academicYears.length > 0 ? backupData.academicYears : INITIAL_ACADEMIC_YEARS,
+        schedules: Array.isArray(backupData.schedules) ? backupData.schedules : [],
+        attendanceRecords: backupData.attendanceRecords && typeof backupData.attendanceRecords === 'object' ? backupData.attendanceRecords : {},
+        userAccounts: ensureDefaultAccounts(backupData.userAccounts || INITIAL_USER_ACCOUNTS),
+        journals: Array.isArray(backupData.journals) ? backupData.journals : [],
+        activeWeekFilter: backupData.activeWeekFilter || 'AUTO',
+        monthlyWeekSchedules: backupData.monthlyWeekSchedules || {},
+        lastUpdated: now,
+        lastUpdatedBy: `${currentUser.name || 'Admin'} (Pulih Cadangan)`,
+        lastUpdatedByClientId: clientId,
+        isInitialEmpty: false,
+      });
+
+      localMutationVersionRef.current += 1;
+      lastLocalMutationAtRef.current = now;
+      applyRemoteStore(restoredStore);
+      await setDoc(doc(db, 'simpati_data', 'main_store'), restoredStore);
+      await syncToServer('fullState', restoredStore, { lastUpdated: now, skipBroadcast: false });
+      setIsCloudConnected(true);
+      setCloudSyncError(null);
+
+      return {
+        success: true,
+        message: `Berhasil memulihkan ${restoredStore.teachers.length} guru, ${restoredStore.classes.length} kelas, dan ${restoredStore.schedules.length} jadwal dari cadangan Cloud!`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Gagal memulihkan cadangan Cloud: ${err?.message || 'Kesalahan jaringan'}`,
+      };
+    }
   };
 
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>('monitoring');
@@ -895,14 +1050,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let cloudData: Record<string, any> | null = null;
     let serverData: Record<string, any> | null = null;
 
-    const [cloudRes, serverRes] = await Promise.allSettled([
-      getDoc(doc(db, 'simpati_data', 'main_store')),
+    const readMainCloudDoc = async () => {
+      try {
+        return await getDocFromServer(doc(db, 'simpati_data', 'main_store'));
+      } catch {
+        return await getDoc(doc(db, 'simpati_data', 'main_store'));
+      }
+    };
+
+    const [cloudRes, serverRes, backupRes] = await Promise.allSettled([
+      readMainCloudDoc(),
       fetch('/api/state').then((r) => r.json()),
+      getDoc(doc(db, 'simpati_data', 'main_store_backup')),
     ]);
 
-    if (cloudRes.status === 'fulfilled' && cloudRes.value.exists()) {
-      cloudData = cloudRes.value.data();
+    if (cloudRes.status === 'fulfilled') {
+      if (cloudRes.value.exists()) {
+        cloudData = cloudRes.value.data();
+      }
       setIsCloudConnected(true);
+      setCloudSyncError(null);
+    } else {
+      setIsCloudConnected(false);
     }
 
     if (serverRes.status === 'fulfilled' && serverRes.value?.success && serverRes.value?.data) {
@@ -910,22 +1079,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsServerConnected(true);
     }
 
+    if (backupRes.status === 'fulfilled' && backupRes.value.exists()) {
+      const b = backupRes.value.data();
+      if (hasMeaningfulSchoolData(b)) {
+        setHasCloudBackup(true);
+        setCloudBackupSummary({
+          backedUpAt: b.backedUpAt,
+          backedUpBy: b.backedUpBy,
+          teachersCount: Array.isArray(b.teachers) ? b.teachers.length : 0,
+          classesCount: Array.isArray(b.classes) ? b.classes.length : 0,
+          schedulesCount: Array.isArray(b.schedules) ? b.schedules.length : 0,
+        });
+      }
+    }
+
     if (localMutationVersionRef.current !== startVersion) {
       return;
     }
 
-    const cloudTs = typeof cloudData?.lastUpdated === 'number' ? cloudData.lastUpdated : 0;
-    const serverTs = typeof serverData?.lastUpdated === 'number' ? serverData.lastUpdated : 0;
+    const decision = pickAuthoritativeStore({ cloudData, serverData });
 
-    if (serverData && serverTs > cloudTs) {
-      applyRemoteStore(serverData);
-      if (cloudData !== null || serverTs > 0) {
+    if (decision.chosen) {
+      applyRemoteStore(decision.chosen);
+
+      // Pastikan server lokal container (ephemeral) selalu terisi dari Cloud Firestore
+      if (decision.hydrateServerFromCloud && cloudData) {
+        syncToServer('fullState', cloudData, {
+          lastUpdated: typeof cloudData.lastUpdated === 'number' ? cloudData.lastUpdated : Date.now(),
+          skipBroadcast: true,
+        });
+      }
+
+      // Hanya unggah server -> Cloud jika server benar-benar menyimpan data sekolah valid yang belum ada di Cloud
+      if (decision.syncCloudFromServer && serverData) {
         syncToCloud(stripUndefined(serverData));
       }
-    } else if (cloudData) {
-      applyRemoteStore(cloudData);
-    } else if (serverData) {
-      applyRemoteStore(serverData);
     }
   };
 
@@ -943,10 +1131,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         attendanceRecords: {},
         userAccounts: ensureDefaultAccounts(userAccounts.length > 0 ? userAccounts : INITIAL_USER_ACCOUNTS),
         journals,
-        activeWeekFilter: 'ACTIVE',
+        activeWeekFilter: 'AUTO',
         lastUpdated: Date.now(),
         lastUpdatedBy: currentUser.name || 'Admin SIMPATI',
+        isInitialEmpty: false,
       };
+
+      teachersRef.current = SEED_TEACHERS;
+      subjectsRef.current = SEED_SUBJECTS;
+      classesRef.current = SEED_CLASSES;
+      departmentsRef.current = SEED_DEPARTMENTS;
+      roomsRef.current = SEED_ROOMS;
+      schedulesRef.current = SEED_SCHEDULES;
 
       setTeachers(SEED_TEACHERS);
       setSubjects(SEED_SUBJECTS);
@@ -967,9 +1163,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncToServer('fullState', payload);
       await setDoc(doc(db, 'simpati_data', 'main_store'), payload);
       setIsCloudConnected(true);
+      setCloudSyncError(null);
       return true;
-    } catch (err) {
+    } catch (err: any) {
       console.error('[SIMPATI Cloud] Gagal seed database dari preset:', err);
+      setCloudSyncError(err?.message || 'Gagal seed database ke Cloud Firestore');
       return false;
     }
   };
@@ -978,6 +1176,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     let isMounted = true;
 
+    testFirestoreConnection().then((ok) => {
+      if (isMounted) setIsCloudConnected(ok);
+    });
+
     // 1. Dengarkan database Cloud Firestore secara real-time ke dokumen bersama
     const unsubscribeFirestore = onSnapshot(
       doc(db, 'simpati_data', 'main_store'),
@@ -985,7 +1187,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (!isMounted) return;
         if (snapshot.exists()) {
           const s = snapshot.data();
-          
+
           // Abaikan echo lokal atau ack in-flight yang lebih lama daripada mutasi lokal terbaru
           if (s.lastUpdatedByClientId === clientId && snapshot.metadata.hasPendingWrites) {
             return;
@@ -998,35 +1200,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             return;
           }
 
-          // Inisialisasi awal ke Cloud Firestore dengan struktur bersih jika dokumen belum pernah diinisialisasi
-          const isStoreBrandNew = !s.lastUpdated && !Array.isArray(s.classes) && !Array.isArray(s.teachers);
-          if (isStoreBrandNew) {
-            console.log('[SIMPATI Cloud] Inisialisasi struktur bersih awal ke Cloud Firestore...');
-            const cleanInit = {
-              teachers: [],
-              subjects: [],
-              classes: [],
-              departments: [],
-              rooms: [],
-              academicYears: INITIAL_ACADEMIC_YEARS,
-              schedules: [],
-              attendanceRecords: {},
-              userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
-              journals: [],
-              activeWeekFilter: 'AUTO',
-              monthlyWeekSchedules: {},
-              lastUpdated: Date.now(),
-              lastUpdatedBy: 'System Fresh Init',
-            };
-            setDoc(doc(db, 'simpati_data', 'main_store'), cleanInit).catch(() => {});
-          }
-
           applyRemoteStore(s);
           setIsCloudConnected(true);
+          setCloudSyncError(null);
           setIsServerConnected(true);
         } else {
-          // Inisialisasi awal database cloud bersih jika belum ada
+          // Jangan langsung menimpa jika snapshot berasal dari cache kosong! Verifikasi langsung ke server Firestore
           try {
+            const serverSnap = await getDocFromServer(doc(db, 'simpati_data', 'main_store'));
+            if (!isMounted) return;
+            if (serverSnap.exists()) {
+              applyRemoteStore(serverSnap.data());
+              setIsCloudConnected(true);
+              setCloudSyncError(null);
+              return;
+            }
+
+            const alreadyHasLocalData = hasMeaningfulSchoolData({
+              teachers: teachersRef.current,
+              subjects: subjectsRef.current,
+              classes: classesRef.current,
+              departments: departmentsRef.current,
+              rooms: roomsRef.current,
+              schedules: schedulesRef.current,
+              journals: journalsRef.current,
+            });
+            if (alreadyHasLocalData) {
+              return;
+            }
+
             const initialStore = {
               teachers: [],
               subjects: [],
@@ -1040,19 +1242,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               journals: [],
               activeWeekFilter: 'AUTO',
               monthlyWeekSchedules: {},
-              lastUpdated: Date.now(),
+              lastUpdated: 0,
               lastUpdatedBy: 'System Fresh Init',
+              isInitialEmpty: true,
             };
-            await setDoc(doc(db, 'simpati_data', 'main_store'), initialStore);
+            await setDoc(doc(db, 'simpati_data', 'main_store'), initialStore, { merge: true });
             setIsCloudConnected(true);
           } catch (seedErr) {
-            console.warn('[SIMPATI Cloud] Inisialisasi cloud store awal:', seedErr);
+            console.warn('[SIMPATI Cloud] Verifikasi/inisialisasi cloud store awal:', seedErr);
           }
         }
       },
       (err) => {
         console.warn('[SIMPATI Cloud] Firestore listener error, fallback aktif:', err);
         setIsCloudConnected(false);
+        setCloudSyncError(err?.message || 'Koneksi real-time Firestore terputus');
       }
     );
 
@@ -1556,19 +1760,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           message: data.message || `Login berhasil! Selamat datang, ${authUser.name}.`,
           user: authUser,
         };
-      } else if (!resp.ok && data.message) {
+      } else if (resp.status === 403 && data.message) {
         return {
           success: false,
           message: data.message,
         };
       }
     } catch (err) {
-      // Server offline / fallback ke verifikasi lokal
+      // Server offline / belum terhidrasi -> fallback ke verifikasi Cloud Firestore / userAccountsRef
     }
 
-    // 2. Verifikasi lokal terhadap userAccounts
+    // 2. Verifikasi lokal terhadap userAccountsRef (tersinkronisasi dari Cloud Firestore)
     const trimmedUser = usernameInput.trim().toLowerCase();
-    const matched = userAccounts.find(
+    const matched = userAccountsRef.current.find(
       (acc) =>
         (acc.username.toLowerCase() === trimmedUser ||
           (acc.nip && acc.nip.replace(/\s+/g, '').toLowerCase() === trimmedUser.replace(/\s+/g, '')) ||
@@ -1581,6 +1785,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         success: false,
         message: 'Username atau password salah! Pastikan akun telah didaftarkan oleh Admin.',
       };
+    }
+
+    // Hidrasi akun Cloud ke server lokal jika server sebelumnya kosong (cold start)
+    if (userAccountsRef.current.length > 3) {
+      syncToServer('userAccounts', userAccountsRef.current);
     }
 
     if (matched.status === 'nonaktif') {
@@ -1752,7 +1961,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const importTeachers = (newTeachers: Teacher[]) => updateTeachersAndSync((prev) => [...prev, ...newTeachers]);
+  const importTeachers = (newTeachers: Teacher[]) => {
+    updateTeachersAndSync((prev) => [...prev, ...newTeachers]);
+    queueMicrotask(() => { void createCloudBackup('Setelah Impor Data Guru'); });
+  };
 
   const addSubject = (subject: Subject) => updateSubjectsAndSync((prev) => [...prev, subject]);
   const updateSubject = (subject: Subject) => {
@@ -1811,7 +2023,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const importSubjects = (newSubjects: Subject[]) => updateSubjectsAndSync((prev) => [...prev, ...newSubjects]);
+  const importSubjects = (newSubjects: Subject[]) => {
+    updateSubjectsAndSync((prev) => [...prev, ...newSubjects]);
+    queueMicrotask(() => { void createCloudBackup('Setelah Impor Mata Pelajaran'); });
+  };
 
   const addDepartment = (dept: Department) => updateDepartmentsAndSync((prev) => [...prev, dept]);
   const updateDepartment = (dept: Department) => {
@@ -1966,7 +2181,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const importClasses = (newClasses: SchoolClass[]) => updateClassesAndSync((prev) => [...prev, ...newClasses]);
+  const importClasses = (newClasses: SchoolClass[]) => {
+    updateClassesAndSync((prev) => [...prev, ...newClasses]);
+    queueMicrotask(() => { void createCloudBackup('Setelah Impor Data Kelas'); });
+  };
 
   const addRoom = (room: Room) => updateRoomsAndSync((prev) => [...prev, room]);
   const updateRoom = (room: Room) => {
@@ -1994,7 +2212,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const importRooms = (newRooms: Room[]) => updateRoomsAndSync((prev) => [...prev, ...newRooms]);
+  const importRooms = (newRooms: Room[]) => {
+    updateRoomsAndSync((prev) => [...prev, ...newRooms]);
+    queueMicrotask(() => { void createCloudBackup('Setelah Impor Data Ruang'); });
+  };
 
   const addAcademicYear = (ay: AcademicYear) => updateAcademicYearsAndSync((prev) => [...prev, ay]);
   const updateAcademicYear = (ay: AcademicYear) =>
@@ -2054,7 +2275,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateSchedulesAndSync([]);
     updateAttendanceRecordsAndSync({});
   };
-  const clearTableData = (tableKey: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua') => {
+  const clearTableData = async (tableKey: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua') => {
+    // Simpan cadangan otomatis di Cloud sebelum melakukan pengosongan massal
+    await createCloudBackup(`Sebelum Kosongkan Tab (${tableKey})`);
+
     if (tableKey === 'guru') {
       updateTeachersAndSync([]);
       updateUserAccountsAndSync((prev) =>
@@ -2083,6 +2307,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           userAccountsRef.current.filter((a) => a.role === 'admin' || a.role === 'pimpinan' || !a.teacherId)
         )
       );
+      const now = Date.now();
       const cleanPayload = {
         teachers: [],
         subjects: [],
@@ -2096,8 +2321,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         userAccounts: preservedAccounts,
         activeWeekFilter: 'AUTO',
         monthlyWeekSchedules: {},
-        lastUpdated: Date.now(),
+        lastUpdated: now,
         lastUpdatedBy: currentUser.name || 'Admin SIMPATI',
+        lastUpdatedByClientId: clientId,
+        isInitialEmpty: true,
+        explicitResetAt: now,
       };
 
       teachersRef.current = [];
@@ -2112,6 +2340,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       userAccountsRef.current = preservedAccounts;
       monthlyWeekSchedulesRef.current = {};
       localMutationVersionRef.current += 1;
+      lastLocalMutationAtRef.current = now;
 
       setTeachers([]);
       setSubjects([]);
@@ -2152,13 +2381,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
   };
-  const importSchedules = (items: ScheduleItem[]) => updateSchedulesAndSync((prev) => [...prev, ...items]);
+  const importSchedules = (items: ScheduleItem[]) => {
+    updateSchedulesAndSync((prev) => [...prev, ...items]);
+    queueMicrotask(() => { void createCloudBackup('Setelah Impor Jadwal Pelajaran'); });
+  };
   const importClassSchedules = (classId: string, items: ScheduleItem[]) => {
     updateSchedulesAndSync((prev) => {
       // Hapus jadwal kelas yang diimpor, gantikan dengan jadwal baru, pertahankan jadwal kelas lainnya
       const otherClassesSchedules = prev.filter((s) => s.classId !== classId);
       return [...otherClassesSchedules, ...items];
     });
+    queueMicrotask(() => { void createCloudBackup('Setelah Impor Jadwal Kelas'); });
   };
 
   // Jurnal Mengajar Handlers
@@ -2175,6 +2408,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetAllData = async () => {
+    await createCloudBackup('Sebelum Reset Total Database');
+    const now = Date.now();
     const freshAccounts = stripUndefined(ensureDefaultAccounts(INITIAL_USER_ACCOUNTS));
     const freshPayload = {
       teachers: [],
@@ -2189,8 +2424,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       userAccounts: freshAccounts,
       activeWeekFilter: 'AUTO',
       monthlyWeekSchedules: {},
-      lastUpdated: Date.now(),
+      lastUpdated: now,
       lastUpdatedBy: currentUser.name || 'Admin',
+      lastUpdatedByClientId: clientId,
+      isInitialEmpty: true,
+      explicitResetAt: now,
     };
 
     try {
@@ -2213,6 +2451,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     userAccountsRef.current = freshAccounts;
     monthlyWeekSchedulesRef.current = {};
     localMutationVersionRef.current += 1;
+    lastLocalMutationAtRef.current = now;
 
     setTeachers([]);
     setSubjects([]);
@@ -2305,6 +2544,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isAuthenticated,
         isServerConnected,
         isCloudConnected,
+        cloudSyncError,
+        hasCloudBackup,
+        cloudBackupSummary,
         logout,
         activeMenu,
         currentPeriod,
@@ -2394,6 +2636,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteJournal,
         refreshFromServer,
         seedDatabaseFromPreset,
+        createCloudBackup,
+        restoreFromCloudBackup,
       }}
     >
       {children}
