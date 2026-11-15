@@ -244,7 +244,6 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
     hasRoomConflict,
     ownSameClassScheduleIds,
     otherWeekAvailability,
-    classPeriodMap,
     weekFillCounts,
   } = conflictAnalysis;
 
@@ -696,7 +695,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
             </div>
           </div>
 
-          {/* Baris 4: Kelas & Rombel (Data Master Real-Time) + Peta Jam 1-11 */}
+          {/* Baris 4: Kelas & Rombel (Data Master Real-Time) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
@@ -708,88 +707,23 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
               </span>
             </div>
             {classes.length > 0 ? (
-              <>
-                <select
-                  value={classId}
-                  onChange={(e) => setClassId(e.target.value)}
-                  className={`w-full text-xs font-bold bg-slate-50 border rounded-xl p-3 focus:outline-none focus:ring-2 cursor-pointer shadow-2xs ${
-                    hasOtherTeacherClassConflict
-                      ? 'border-rose-400 bg-rose-50/50 text-rose-900 focus:ring-rose-500'
-                      : hasOwnSameClassConflict
-                      ? 'border-amber-400 bg-amber-50/40 text-amber-950 focus:ring-amber-500'
-                      : 'border-slate-300 text-slate-800 focus:ring-cyan-500'
-                  }`}
-                >
-                  {classes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} {c.department ? `(${c.department})` : ''} - Tingkat {c.grade}
-                    </option>
-                  ))}
-                </select>
-
-                {/* Peta Jam 1-11 Real-Time untuk Kelas, Hari, dan Pekan Terpilih */}
-                {selectedClassName && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1.5">
-                    <div className="flex flex-wrap items-center justify-between gap-1 text-[10px] text-slate-600 font-semibold">
-                      <span>
-                        Peta Slot {selectedClassName} · {dayName} ({getWeekTypeShortLabel(weekType)})
-                      </span>
-                      <span className="text-slate-400">Klik jam kosong untuk pilih cepat</span>
-                    </div>
-                    <div className="grid grid-cols-6 sm:grid-cols-11 gap-1">
-                      {classPeriodMap.map((slot) => {
-                        const isInTarget = slot.period >= startPeriod && slot.period <= endPeriod;
-                        if (!slot.schedule) {
-                          return (
-                            <button
-                              key={slot.period}
-                              type="button"
-                              onClick={() => {
-                                setStartPeriod(slot.period);
-                                setEndPeriod(slot.period);
-                              }}
-                              title={`Jam Ke-${slot.period}: Kosong (klik untuk pilih jam ini)`}
-                              className={`px-1 py-1.5 rounded-lg border text-center transition cursor-pointer ${
-                                isInTarget
-                                  ? 'bg-emerald-600 text-white border-emerald-700 font-extrabold shadow-2xs'
-                                  : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50 font-bold'
-                              }`}
-                            >
-                              <div className="text-[10px] leading-none">J{slot.period}</div>
-                              <div className="text-[8px] mt-0.5 opacity-85">Kosong</div>
-                            </button>
-                          );
-                        }
-                        return (
-                          <button
-                            key={slot.period}
-                            type="button"
-                            onClick={() => {
-                              setStartPeriod(slot.period);
-                              setEndPeriod(slot.period);
-                            }}
-                            title={`Jam Ke-${slot.period}: ${slot.schedule.subjectName} (${slot.schedule.teacherName})`}
-                            className={`px-1 py-1.5 rounded-lg border text-center transition cursor-pointer ${
-                              slot.isOwn
-                                ? isInTarget
-                                  ? 'bg-amber-500 text-white border-amber-600 font-extrabold'
-                                  : 'bg-amber-50 text-amber-900 border-amber-300 font-bold'
-                                : isInTarget
-                                ? 'bg-rose-600 text-white border-rose-700 font-extrabold'
-                                : 'bg-rose-50 text-rose-800 border-rose-200 font-semibold'
-                            }`}
-                          >
-                            <div className="text-[10px] leading-none">J{slot.period}</div>
-                            <div className="text-[8px] mt-0.5 truncate">
-                              {slot.isOwn ? 'Anda' : slot.schedule.teacherCode || 'Terisi'}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </>
+              <select
+                value={classId}
+                onChange={(e) => setClassId(e.target.value)}
+                className={`w-full text-xs font-bold bg-slate-50 border rounded-xl p-3 focus:outline-none focus:ring-2 cursor-pointer shadow-2xs ${
+                  hasOtherTeacherClassConflict
+                    ? 'border-rose-400 bg-rose-50/50 text-rose-900 focus:ring-rose-500'
+                    : hasOwnSameClassConflict
+                    ? 'border-amber-400 bg-amber-50/40 text-amber-950 focus:ring-amber-500'
+                    : 'border-slate-300 text-slate-800 focus:ring-cyan-500'
+                }`}
+              >
+                {classes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.department ? `(${c.department})` : ''} - Tingkat {c.grade}
+                  </option>
+                ))}
+              </select>
             ) : (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
