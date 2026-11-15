@@ -25,6 +25,7 @@ interface ScheduleImportModalProps {
   rooms: Room[];
   teachers: Teacher[];
   subjects: Subject[];
+  defaultWeekType?: ScheduleWeekType;
   onImport: (
     newSchedules: ScheduleItem[],
     newTeachers: Teacher[],
@@ -107,13 +108,14 @@ export const ScheduleImportModal: React.FC<ScheduleImportModalProps> = ({
   rooms,
   teachers,
   subjects,
+  defaultWeekType = 'P10_PROD_P11_NORM',
   onImport,
 }) => {
   // Method tab: 'file' (Excel/CSV upload) or 'text' (manual paste)
   const [activeTab, setActiveTab] = useState<'file' | 'text'>('file');
 
   const [targetClassId, setTargetClassId] = useState(classes[0]?.id || 'cl-1');
-  const [targetWeekType, setTargetWeekType] = useState<ScheduleWeekType>('P10_PROD_P11_NORM');
+  const [targetWeekType, setTargetWeekType] = useState<ScheduleWeekType>(defaultWeekType);
   const [inputText, setInputText] = useState(DEFAULT_SAMPLE_SCHEDULE);
 
   // File Upload State
@@ -132,7 +134,18 @@ export const ScheduleImportModal: React.FC<ScheduleImportModalProps> = ({
   const [successInfo, setSuccessInfo] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const wasOpenRef = useRef(false);
   const targetClassObj = classes.find((c) => c.id === targetClassId) || classes[0];
+
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      setTargetWeekType(defaultWeekType);
+      if (classes.length > 0 && !classes.some((c) => c.id === targetClassId)) {
+        setTargetClassId(classes[0].id);
+      }
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen, defaultWeekType, classes, targetClassId]);
 
   useEffect(() => {
     if (isOpen) {

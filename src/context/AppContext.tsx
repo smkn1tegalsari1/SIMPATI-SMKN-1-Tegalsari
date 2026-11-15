@@ -50,11 +50,15 @@ import {
   SEED_ROOMS,
   SEED_SCHEDULES,
 } from '../data/masterSeedData';
-import { doc, getDoc, getDocFromServer, setDoc, onSnapshot } from 'firebase/firestore';
-import { db, testFirestoreConnection } from '../lib/firebase';
+import { doc, getDoc, getDocFromServer, setDoc, onSnapshot, runTransaction } from 'firebase/firestore';
+import { db, testFirestoreConnection, OperationType, handleFirestoreError } from '../lib/firebase';
 import {
   hasMeaningfulSchoolData,
   pickAuthoritativeStore,
+  ScheduleDelta,
+  createEmptyScheduleDelta,
+  hasScheduleDeltaChanges,
+  mergeSchedulesWithDelta,
 } from '../data/storeSync';
 
 export interface StatsSummary {
@@ -195,6 +199,10 @@ interface AppContextType {
   addSchedule: (item: ScheduleItem) => void;
   updateSchedule: (item: ScheduleItem) => void;
   deleteSchedule: (id: string) => void;
+  saveSchedulesBatch: (
+    items: ScheduleItem[],
+    replaceId?: string
+  ) => Promise<{ success: boolean; error?: string; savedCount: number }>;
   bulkDeleteSchedules: (ids: string[]) => void;
   bulkUpdateSchedules: (ids: string[], updates: Partial<ScheduleItem>) => void;
   clearAllSchedules: () => void;
@@ -552,24 +560,72 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const pendingServerPatchRef = React.useRef<Record<string, any>>({});
   const pendingCloudPatchRef = React.useRef<Record<string, any>>({});
+  const pendingScheduleDeltaRef = React.useRef<ScheduleDelta>(createEmptyScheduleDelta());
+  const inFlightScheduleDeltaRef = React.useRef<ScheduleDelta | null>(null);
+  const inFlightCloudFlushCountRef = React.useRef<number>(0);
+  const activeFlushPromiseRef = React.useRef<Promise<boolean> | null>(null);
   const flushScheduledRef = React.useRef<boolean>(false);
   const lastLocalMutationAtRef = React.useRef<number>(0);
 
-  const scheduleSyncFlush = () => {
-    if (flushScheduledRef.current) return;
-    flushScheduledRef.current = true;
-    queueMicrotask(() => {
-      flushScheduledRef.current = false;
-      const serverPatch = pendingServerPatchRef.current;
-      const cloudPatch = pendingCloudPatchRef.current;
-      pendingServerPatchRef.current = {};
-      pendingCloudPatchRef.current = {};
+  const recordScheduleDelta = (patch: Partial<ScheduleDelta>) => {
+    const cur = pendingScheduleDeltaRef.current;
+    if (patch.replaceAll !== undefined) {
+      pendingScheduleDeltaRef.current = {
+        upserts: [],
+        deleteIds: [],
+        replaceAll: stripUndefined(patch.replaceAll),
+      };
+      return;
+    }
+    if (patch.replaceClassScope !== undefined) {
+      cur.replaceClassScope = stripUndefined(patch.replaceClassScope);
+    }
+    if (patch.deleteIds && patch.deleteIds.length > 0) {
+      const delSet = new Set([...cur.deleteIds, ...patch.deleteIds]);
+      cur.deleteIds = Array.from(delSet);
+      cur.upserts = cur.upserts.filter((u) => !u?.id || !delSet.has(u.id));
+    }
+    if (patch.upserts && patch.upserts.length > 0) {
+      const upsertIds = new Set(patch.upserts.map((u) => u?.id).filter(Boolean));
+      cur.deleteIds = cur.deleteIds.filter((id) => !upsertIds.has(id));
+      const map = new Map<string, any>();
+      cur.upserts.forEach((u) => {
+        if (u?.id) map.set(u.id, u);
+      });
+      stripUndefined(patch.upserts).forEach((u: any) => {
+        if (u?.id) map.set(u.id, u);
+      });
+      cur.upserts = Array.from(map.values());
+    }
+  };
 
-      const mutationTs = lastLocalMutationAtRef.current || Date.now();
-      const updatedByName = currentUser.name || 'Pengguna SIMPATI';
+  const flushSyncQueue = async (): Promise<boolean> => {
+    // Jika ada flush lain sedang berjalan, tunggu selesai lalu flush sisa pending baru
+    if (activeFlushPromiseRef.current) {
+      await activeFlushPromiseRef.current;
+    }
 
-      const serverKeys = Object.keys(serverPatch);
-      if (serverKeys.length > 0) {
+    const serverPatch = pendingServerPatchRef.current;
+    const cloudPatch = pendingCloudPatchRef.current;
+    const scheduleDelta = pendingScheduleDeltaRef.current;
+    pendingServerPatchRef.current = {};
+    pendingCloudPatchRef.current = {};
+    pendingScheduleDeltaRef.current = createEmptyScheduleDelta();
+
+    const hasScheduleDelta = hasScheduleDeltaChanges(scheduleDelta);
+    const hasCloudKeys = Object.keys(cloudPatch).length > 0;
+    const hasServerKeys = Object.keys(serverPatch).length > 0;
+
+    if (!hasScheduleDelta && !hasCloudKeys && !hasServerKeys) {
+      return true;
+    }
+
+    const mutationTs = lastLocalMutationAtRef.current || Date.now();
+    const updatedByName = currentUser.name || 'Pengguna SIMPATI';
+
+    const runFlush = (async (): Promise<boolean> => {
+      if (hasServerKeys && !hasScheduleDelta) {
+        const serverKeys = Object.keys(serverPatch);
         const bodyPayload =
           serverKeys.length === 1
             ? {
@@ -595,29 +651,108 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
 
-      if (Object.keys(cloudPatch).length > 0) {
-        const sanitizedPatch = stripUndefined({
-          ...cloudPatch,
-          lastUpdated: mutationTs,
-          lastUpdatedBy: updatedByName,
-          lastUpdatedByClientId: clientId,
-          isInitialEmpty: false,
-        });
-        setDoc(
-          doc(db, 'simpati_data', 'main_store'),
-          sanitizedPatch,
-          { merge: true }
-        )
-          .then(() => {
-            setIsCloudConnected(true);
-            setCloudSyncError(null);
-          })
-          .catch((err) => {
-            console.error('[SIMPATI Cloud] Gagal sinkronisasi data ke Firestore:', err);
-            setIsCloudConnected(false);
-            setCloudSyncError(err?.message || 'Gagal menyimpan ke Cloud Firestore');
-          });
+      if (hasScheduleDelta || hasCloudKeys) {
+        inFlightCloudFlushCountRef.current += 1;
+        if (hasScheduleDelta) {
+          inFlightScheduleDeltaRef.current = scheduleDelta;
+        }
+        try {
+          const mainStoreRef = doc(db, 'simpati_data', 'main_store');
+          if (hasScheduleDelta) {
+            const committedSchedules = await runTransaction(db, async (tx) => {
+              const snap = await tx.get(mainStoreRef);
+              const remoteData = snap.exists() ? snap.data() : {};
+              const remoteSchedules = Array.isArray(remoteData.schedules) ? remoteData.schedules : [];
+              const mergedSchedules = stripUndefined(mergeSchedulesWithDelta(remoteSchedules, scheduleDelta));
+              const remoteTs = typeof remoteData.lastUpdated === 'number' ? remoteData.lastUpdated : 0;
+              const safeTs = Math.max(mutationTs, remoteTs + 1);
+
+              const txPayload = stripUndefined({
+                ...cloudPatch,
+                schedules: mergedSchedules,
+                lastUpdated: safeTs,
+                lastUpdatedBy: updatedByName,
+                lastUpdatedByClientId: clientId,
+                isInitialEmpty: false,
+              });
+              tx.set(mainStoreRef, txPayload, { merge: true });
+              return mergedSchedules;
+            });
+
+            // Gabungkan jika ada mutasi baru yang masuk selama transaksi berlangsung
+            const finalLocalSchedules = hasScheduleDeltaChanges(pendingScheduleDeltaRef.current)
+              ? mergeSchedulesWithDelta(committedSchedules, pendingScheduleDeltaRef.current)
+              : committedSchedules;
+
+            schedulesRef.current = finalLocalSchedules;
+            setSchedules(finalLocalSchedules);
+            try {
+              localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(finalLocalSchedules));
+            } catch (e) {}
+
+            // Sinkronkan server lokal dengan hasil transaksi gabungan agar konsisten
+            fetch('/api/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                fullState: stripUndefined({ ...serverPatch, schedules: finalLocalSchedules }),
+                updatedBy: updatedByName,
+                clientId,
+                lastUpdated: mutationTs,
+              }),
+            }).catch(() => {});
+          } else {
+            const sanitizedPatch = stripUndefined({
+              ...cloudPatch,
+              lastUpdated: mutationTs,
+              lastUpdatedBy: updatedByName,
+              lastUpdatedByClientId: clientId,
+              isInitialEmpty: false,
+            });
+            await setDoc(mainStoreRef, sanitizedPatch, { merge: true });
+          }
+
+          setIsCloudConnected(true);
+          setCloudSyncError(null);
+          return true;
+        } catch (err: any) {
+          handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+          setIsCloudConnected(false);
+          setCloudSyncError(err?.message || 'Gagal menyimpan ke Cloud Firestore');
+          return false;
+        } finally {
+          inFlightCloudFlushCountRef.current = Math.max(0, inFlightCloudFlushCountRef.current - 1);
+          inFlightScheduleDeltaRef.current = null;
+        }
       }
+
+      return true;
+    })();
+
+    activeFlushPromiseRef.current = runFlush;
+    const result = await runFlush;
+    if (activeFlushPromiseRef.current === runFlush) {
+      activeFlushPromiseRef.current = null;
+    }
+
+    // Jika masih ada perubahan baru yang antre selama transaksi berjalan, flush lagi
+    if (
+      hasScheduleDeltaChanges(pendingScheduleDeltaRef.current) ||
+      Object.keys(pendingCloudPatchRef.current).length > 0 ||
+      Object.keys(pendingServerPatchRef.current).length > 0
+    ) {
+      return flushSyncQueue();
+    }
+
+    return result;
+  };
+
+  const scheduleSyncFlush = () => {
+    if (flushScheduledRef.current) return;
+    flushScheduledRef.current = true;
+    queueMicrotask(() => {
+      flushScheduledRef.current = false;
+      void flushSyncQueue();
     });
   };
 
@@ -928,9 +1063,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncToCloud({ academicYears: next });
   };
 
-  const updateSchedulesAndSync = (updater: ScheduleItem[] | ((prev: ScheduleItem[]) => ScheduleItem[])) => {
-    const rawNext = typeof updater === 'function' ? updater(schedulesRef.current) : updater;
+  const updateSchedulesAndSync = (
+    updater: ScheduleItem[] | ((prev: ScheduleItem[]) => ScheduleItem[]),
+    explicitDelta?: Partial<ScheduleDelta>
+  ) => {
+    const prevList = schedulesRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+
+    if (explicitDelta) {
+      recordScheduleDelta(explicitDelta);
+    } else {
+      // Hitung selisih (upserts & deleteIds) secara otomatis agar selalu aman digabung secara transaksional
+      const prevMap = new Map<string, ScheduleItem>();
+      prevList.forEach((item) => {
+        if (item?.id) prevMap.set(item.id, item);
+      });
+      const nextIds = new Set<string>();
+      const upserts: ScheduleItem[] = [];
+      next.forEach((item) => {
+        if (item?.id) {
+          nextIds.add(item.id);
+          const old = prevMap.get(item.id);
+          if (!old || JSON.stringify(old) !== JSON.stringify(item)) {
+            upserts.push(item);
+          }
+        }
+      });
+      const deleteIds: string[] = [];
+      prevMap.forEach((_, id) => {
+        if (!nextIds.has(id)) deleteIds.push(id);
+      });
+      if (upserts.length > 0 || deleteIds.length > 0) {
+        recordScheduleDelta({ upserts, deleteIds });
+      }
+    }
+
     schedulesRef.current = next;
     localMutationVersionRef.current += 1;
     setSchedules(next);
@@ -938,7 +1106,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('schedules', next);
-    syncToCloud({ schedules: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
   const updateAttendanceRecordsAndSync = (updater: Record<string, AttendanceRecord> | ((prev: Record<string, AttendanceRecord>) => Record<string, AttendanceRecord>)) => {
@@ -1012,9 +1181,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {}
     }
     if (Array.isArray(s.schedules)) {
-      schedulesRef.current = s.schedules;
-      setSchedules(s.schedules);
-      try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(s.schedules)); } catch (e) {}
+      let mergedSchedules = s.schedules;
+      if (inFlightScheduleDeltaRef.current) {
+        mergedSchedules = mergeSchedulesWithDelta(mergedSchedules, inFlightScheduleDeltaRef.current);
+      }
+      if (hasScheduleDeltaChanges(pendingScheduleDeltaRef.current)) {
+        mergedSchedules = mergeSchedulesWithDelta(mergedSchedules, pendingScheduleDeltaRef.current);
+      }
+      schedulesRef.current = mergedSchedules;
+      setSchedules(mergedSchedules);
+      try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(mergedSchedules)); } catch (e) {}
     }
     if (s.attendanceRecords && typeof s.attendanceRecords === 'object') {
       attendanceRecordsRef.current = s.attendanceRecords;
@@ -1188,14 +1364,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (snapshot.exists()) {
           const s = snapshot.data();
 
-          // Abaikan echo lokal atau ack in-flight yang lebih lama daripada mutasi lokal terbaru
-          if (s.lastUpdatedByClientId === clientId && snapshot.metadata.hasPendingWrites) {
-            return;
-          }
+          // Abaikan hanya jika ini echo pending milik klien ini sendiri yang transaksinya masih berjalan
           if (
-            typeof s.lastUpdated === 'number' &&
-            lastLocalMutationAtRef.current > 0 &&
-            s.lastUpdated < lastLocalMutationAtRef.current
+            s.lastUpdatedByClientId === clientId &&
+            (snapshot.metadata.hasPendingWrites || inFlightCloudFlushCountRef.current > 0)
           ) {
             return;
           }
@@ -1284,7 +1456,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             else if (key === 'departments' && Array.isArray(data)) { departmentsRef.current = data; setDepartments(data); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data)); } catch (e) {} }
             else if (key === 'rooms' && Array.isArray(data)) { roomsRef.current = data; setRooms(data); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data)); } catch (e) {} }
             else if (key === 'academicYears' && Array.isArray(data)) { academicYearsRef.current = data; setAcademicYears(data); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'schedules' && Array.isArray(data)) { schedulesRef.current = data; setSchedules(data); try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data)); } catch (e) {} }
+            else if (key === 'schedules' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasScheduleDeltaChanges(pendingScheduleDeltaRef.current)) {
+                return;
+              }
+              schedulesRef.current = data;
+              setSchedules(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(data)); } catch (e) {}
+            }
             else if (key === 'attendanceRecords' && typeof data === 'object' && data !== null) { attendanceRecordsRef.current = data; setAttendanceRecords(data); try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data)); } catch (e) {} }
             else if (key === 'userAccounts' && Array.isArray(data)) {
               const reconciled = ensureDefaultAccounts(data);
@@ -2243,11 +2422,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const addSchedule = (item: ScheduleItem) => updateSchedulesAndSync((prev) => [...prev, item]);
+  const addSchedule = (item: ScheduleItem) =>
+    updateSchedulesAndSync(
+      (prev) => [...prev.filter((s) => s.id !== item.id), item],
+      { upserts: [item] }
+    );
   const updateSchedule = (item: ScheduleItem) =>
-    updateSchedulesAndSync((prev) => prev.map((s) => (s.id === item.id ? item : s)));
+    updateSchedulesAndSync(
+      (prev) => prev.map((s) => (s.id === item.id ? item : s)),
+      { upserts: [item] }
+    );
   const deleteSchedule = (id: string) => {
-    updateSchedulesAndSync((prev) => prev.filter((s) => s.id !== id));
+    updateSchedulesAndSync((prev) => prev.filter((s) => s.id !== id), { deleteIds: [id] });
     updateAttendanceRecordsAndSync((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -2255,9 +2441,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const saveSchedulesBatch = async (
+    items: ScheduleItem[],
+    replaceId?: string
+  ): Promise<{ success: boolean; error?: string; savedCount: number }> => {
+    const cleanItems = stripUndefined(items);
+    const deleteIds = replaceId ? [replaceId] : [];
+    const delta: Partial<ScheduleDelta> = {
+      upserts: cleanItems,
+      deleteIds,
+    };
+
+    updateSchedulesAndSync(
+      (prev) => mergeSchedulesWithDelta(prev, { upserts: cleanItems, deleteIds }),
+      delta
+    );
+
+    const ok = await flushSyncQueue();
+    return {
+      success: ok,
+      savedCount: cleanItems.length,
+      error: ok ? undefined : (cloudSyncError || 'Gagal menyimpan jadwal ke Cloud Firestore.'),
+    };
+  };
+
   const bulkDeleteSchedules = (ids: string[]) => {
     const idSet = new Set(ids);
-    updateSchedulesAndSync((prev) => prev.filter((s) => !idSet.has(s.id)));
+    updateSchedulesAndSync((prev) => prev.filter((s) => !idSet.has(s.id)), { deleteIds: ids });
     updateAttendanceRecordsAndSync((prev) => {
       const next = { ...prev };
       ids.forEach((id) => delete next[id]);
@@ -2272,7 +2482,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
   const clearAllSchedules = () => {
-    updateSchedulesAndSync([]);
+    updateSchedulesAndSync([], { replaceAll: [] });
     updateAttendanceRecordsAndSync({});
   };
   const clearTableData = async (tableKey: 'guru' | 'mapel' | 'jurusan' | 'kelas' | 'ruang' | 'tahun_pelajaran' | 'jadwal' | 'semua') => {
@@ -2293,13 +2503,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateDepartmentsAndSync([]);
     } else if (tableKey === 'kelas') {
       updateClassesAndSync([]);
-      updateSchedulesAndSync([]);
+      updateSchedulesAndSync([], { replaceAll: [] });
     } else if (tableKey === 'ruang') {
       updateRoomsAndSync([]);
     } else if (tableKey === 'tahun_pelajaran') {
       updateAcademicYearsAndSync((prev) => prev.filter((ay) => ay.status === 'aktif'));
     } else if (tableKey === 'jadwal') {
-      updateSchedulesAndSync([]);
+      updateSchedulesAndSync([], { replaceAll: [] });
       updateAttendanceRecordsAndSync({});
     } else if (tableKey === 'semua') {
       const preservedAccounts = stripUndefined(
@@ -2382,15 +2592,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
   const importSchedules = (items: ScheduleItem[]) => {
-    updateSchedulesAndSync((prev) => [...prev, ...items]);
+    updateSchedulesAndSync((prev) => [...prev, ...items], { upserts: items });
     queueMicrotask(() => { void createCloudBackup('Setelah Impor Jadwal Pelajaran'); });
   };
   const importClassSchedules = (classId: string, items: ScheduleItem[]) => {
-    updateSchedulesAndSync((prev) => {
-      // Hapus jadwal kelas yang diimpor, gantikan dengan jadwal baru, pertahankan jadwal kelas lainnya
-      const otherClassesSchedules = prev.filter((s) => s.classId !== classId);
-      return [...otherClassesSchedules, ...items];
-    });
+    const distinctWeeks = Array.from(new Set(items.map((i) => i.weekType).filter(Boolean)));
+    const scopeWeek = distinctWeeks.length === 1 && distinctWeeks[0] !== 'ALL' ? distinctWeeks[0] : undefined;
+    const scopeDelta: ScheduleDelta = {
+      upserts: [],
+      deleteIds: [],
+      replaceClassScope: {
+        classId,
+        weekType: scopeWeek,
+        items,
+      },
+    };
+    updateSchedulesAndSync(
+      (prev) => mergeSchedulesWithDelta(prev, scopeDelta),
+      scopeDelta
+    );
     queueMicrotask(() => { void createCloudBackup('Setelah Impor Jadwal Kelas'); });
   };
 
@@ -2623,6 +2843,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addSchedule,
         updateSchedule,
         deleteSchedule,
+        saveSchedulesBatch,
         bulkDeleteSchedules,
         bulkUpdateSchedules,
         clearAllSchedules,

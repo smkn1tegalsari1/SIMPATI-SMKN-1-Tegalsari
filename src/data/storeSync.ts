@@ -173,3 +173,103 @@ export function pickAuthoritativeStore({
     reason: 'Cloud belum tersedia; menggunakan state server lokal.',
   };
 }
+
+export interface ScheduleDelta {
+  upserts: any[];
+  deleteIds: string[];
+  replaceAll?: any[];
+  replaceClassScope?: {
+    classId: string;
+    weekType?: string;
+    items: any[];
+  };
+}
+
+export function createEmptyScheduleDelta(): ScheduleDelta {
+  return {
+    upserts: [],
+    deleteIds: [],
+  };
+}
+
+export function hasScheduleDeltaChanges(delta?: ScheduleDelta | null): boolean {
+  if (!delta) return false;
+  if (delta.replaceAll !== undefined) return true;
+  if (delta.replaceClassScope !== undefined) return true;
+  if (delta.upserts.length > 0) return true;
+  if (delta.deleteIds.length > 0) return true;
+  return false;
+}
+
+/**
+ * Menggabungkan perubahan jadwal lokal (tambah/ubah/hapus/impor per kelas & pekan)
+ * di atas daftar jadwal terbaru dari Cloud Firestore secara atomik sehingga
+ * jadwal guru lain yang masuk bersamaan TIDAK PERNAH tertimpa atau hilang.
+ */
+export function mergeSchedulesWithDelta(
+  remoteSchedules: any[] | undefined | null,
+  delta: ScheduleDelta
+): any[] {
+  if (delta.replaceAll !== undefined) {
+    return [...delta.replaceAll];
+  }
+
+  let result = Array.isArray(remoteSchedules) ? [...remoteSchedules] : [];
+
+  if (delta.replaceClassScope) {
+    const { classId, weekType, items } = delta.replaceClassScope;
+    const scopeWeek = weekType && weekType !== 'ALL' ? weekType : null;
+    result = result.filter((s) => {
+      if (!s || s.classId !== classId) return true;
+      if (!scopeWeek) return false;
+      // Hanya ganti slot pada kelas & pekan yang sama, pertahankan pekan rotasi lainnya
+      const itemWeek = s.weekType || null;
+      return itemWeek !== null && itemWeek !== scopeWeek;
+    });
+    const newIds = new Set(items.map((x) => x?.id).filter(Boolean));
+    result = result.filter((s) => !s?.id || !newIds.has(s.id));
+    result.push(...items);
+  }
+
+  if (delta.deleteIds.length > 0) {
+    const deleteSet = new Set(delta.deleteIds);
+    result = result.filter((s) => !s?.id || !deleteSet.has(s.id));
+  }
+
+  if (delta.upserts.length > 0) {
+    const upsertMap = new Map<string, any>();
+    for (const item of delta.upserts) {
+      if (item && item.id) {
+        upsertMap.set(item.id, item);
+      }
+    }
+    const seen = new Set<string>();
+    result = result.map((existing) => {
+      if (existing?.id && upsertMap.has(existing.id)) {
+        seen.add(existing.id);
+        return upsertMap.get(existing.id);
+      }
+      return existing;
+    });
+    for (const [id, item] of upsertMap.entries()) {
+      if (!seen.has(id)) {
+        result.push(item);
+      }
+    }
+  }
+
+  // Deduplikasi akhir berdasarkan id (pertahankan entri terbaru)
+  const dedupedReversed: any[] = [];
+  const seenFinal = new Set<string>();
+  for (let i = result.length - 1; i >= 0; i--) {
+    const item = result[i];
+    if (!item) continue;
+    if (item.id) {
+      if (seenFinal.has(item.id)) continue;
+      seenFinal.add(item.id);
+    }
+    dedupedReversed.push(item);
+  }
+  return dedupedReversed.reverse();
+}
+

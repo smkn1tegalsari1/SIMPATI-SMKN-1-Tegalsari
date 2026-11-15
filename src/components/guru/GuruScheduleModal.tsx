@@ -29,7 +29,8 @@ interface GuruScheduleModalProps {
   subjects: Subject[];
   rooms: Room[];
   editingSchedule?: ScheduleItem | null;
-  onSaveBatch: (schedules: ScheduleItem[]) => void;
+  defaultWeekType?: ScheduleWeekType;
+  onSaveBatch: (schedules: ScheduleItem[]) => void | Promise<void>;
 }
 
 export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
@@ -41,20 +42,27 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
   subjects,
   rooms,
   editingSchedule,
+  defaultWeekType = 'P10_PROD_P11_NORM',
   onSaveBatch,
 }) => {
   const [dayName, setDayName] = useState<string>('SENIN');
   const [startPeriod, setStartPeriod] = useState<number>(1);
   const [endPeriod, setEndPeriod] = useState<number>(1);
-  const [weekType, setWeekType] = useState<ScheduleWeekType>('P10_PROD_P11_NORM');
+  const [weekType, setWeekType] = useState<ScheduleWeekType>(
+    defaultWeekType === 'ALL' ? 'P10_PROD_P11_NORM' : defaultWeekType
+  );
   const [classId, setClassId] = useState<string>('');
   const [subjectId, setSubjectId] = useState<string>('');
   const [roomId, setRoomId] = useState<string>('');
   const [customSubjectName, setCustomSubjectName] = useState<string>('');
   const [customRoomName, setCustomRoomName] = useState<string>('');
+  const [submitError, setSubmitError] = useState<string>('');
 
-  // Sinkronkan state saat modal dibuka atau saat data master / editingSchedule diperbarui
+  // Inisialisasi state hanya saat modal dibuka atau editingSchedule berubah (tidak me-reset pilihan user saat background sync)
   useEffect(() => {
+    if (!isOpen) return;
+    setSubmitError('');
+
     if (editingSchedule) {
       setDayName(editingSchedule.dayName || 'SENIN');
       const pNum = typeof editingSchedule.periodIndex === 'number'
@@ -62,11 +70,12 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
         : parseInt(String(editingSchedule.periodIndex), 10) || 1;
       setStartPeriod(pNum);
       setEndPeriod(pNum);
-      // Jika jadwal lama bernilai ALL, alihkan ke P10_PROD_P11_NORM
       setWeekType(
         editingSchedule.weekType && editingSchedule.weekType !== 'ALL'
           ? editingSchedule.weekType
-          : 'P10_PROD_P11_NORM'
+          : defaultWeekType === 'ALL'
+          ? 'P10_PROD_P11_NORM'
+          : defaultWeekType
       );
 
       // 1. Sinkron Kelas
@@ -107,16 +116,24 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       setDayName('SENIN');
       setStartPeriod(1);
       setEndPeriod(1);
-      setWeekType('P10_PROD_P11_NORM');
+      setWeekType(defaultWeekType === 'ALL' ? 'P10_PROD_P11_NORM' : defaultWeekType);
 
-      // Set default sesuai data master terbaru jika ada
-      setClassId((prev) => (classes.some((c) => c.id === prev) ? prev : classes[0]?.id || ''));
-      setSubjectId((prev) => (subjects.some((s) => s.id === prev) ? prev : subjects[0]?.id || ''));
-      setRoomId((prev) => (rooms.some((r) => r.id === prev) ? prev : rooms[0]?.id || ''));
+      setClassId(classes[0]?.id || '');
+      setSubjectId(subjects[0]?.id || '');
+      setRoomId(rooms[0]?.id || '');
       setCustomSubjectName('');
       setCustomRoomName('');
     }
-  }, [editingSchedule, isOpen, classes, subjects, rooms]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingSchedule, isOpen, defaultWeekType]);
+
+  // Jaga agar dropdown tetap valid bila data master baru tiba setelah modal terbuka
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!classId && classes.length > 0) setClassId(classes[0].id);
+    if (!subjectId && subjects.length > 0) setSubjectId(subjects[0].id);
+    if (!roomId && rooms.length > 0) setRoomId(rooms[0].id);
+  }, [isOpen, classes, subjects, rooms, classId, subjectId, roomId]);
 
   // Pastikan endPeriod selalu >= startPeriod
   const handleStartPeriodChange = (val: number) => {
@@ -238,12 +255,13 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
   const hasTeacherConflict = conflicts.some((c) => c.type === 'teacher_conflict');
 
   // Submit Handler: Menghasilkan array jadwal untuk startPeriod s/d endPeriod
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (hasClassConflict) {
-      alert('Jadwal tidak dapat disimpan karena terdapat bentrok jam di kelas tersebut!');
+      setSubmitError('Jadwal tidak dapat disimpan karena terdapat bentrok jam di kelas tersebut.');
       return;
     }
+    setSubmitError('');
 
     const dayMap: Record<string, number> = {
       SENIN: 1, SELASA: 2, RABU: 3, KAMIS: 4, JUMAT: 5,
@@ -298,7 +316,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       };
     });
 
-    onSaveBatch(schedulesToSave);
+    await onSaveBatch(schedulesToSave);
     onClose();
   };
 
@@ -662,6 +680,13 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
               </div>
             )}
           </div>
+
+          {submitError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-700 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{submitError}</span>
+            </div>
+          )}
 
           {/* Footer Actions */}
           <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-3">

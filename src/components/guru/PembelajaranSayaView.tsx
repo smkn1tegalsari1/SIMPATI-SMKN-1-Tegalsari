@@ -34,9 +34,9 @@ export const PembelajaranSayaView: React.FC = () => {
     currentTimeString,
     currentPeriod,
     effectiveWeekType,
+    realtimeWeekType,
     getScheduleStatus,
-    addSchedule,
-    updateSchedule,
+    saveSchedulesBatch,
     deleteSchedule,
   } = useApp();
 
@@ -54,6 +54,13 @@ export const PembelajaranSayaView: React.FC = () => {
   const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
   const [journalDraft, setJournalDraft] = useState<TeachingJournal | null>(null);
   const [isEditMyAccountOpen, setIsEditMyAccountOpen] = useState(false);
+  const [saveToast, setSaveToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!saveToast) return;
+    const t = setTimeout(() => setSaveToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [saveToast]);
 
   // Keep selected teacher in sync when currentUser changes
   useEffect(() => {
@@ -99,11 +106,18 @@ export const PembelajaranSayaView: React.FC = () => {
   const effectiveTeacherId = currentTeacherObj.id;
 
   const teacherBaseSchedules = useMemo(() => {
+    const normalizedTeacherName = (currentTeacherObj?.name || '').trim().toLowerCase();
+    const normalizedTeacherCode = (currentTeacherObj?.code || '').trim().toLowerCase();
     return schedules.filter((s) => {
       // Cocokkan id atau nama/kode guru jika id belum sinkron
       const matchId = s.teacherId === effectiveTeacherId;
-      const matchName = currentTeacherObj?.name && s.teacherName.toLowerCase() === currentTeacherObj.name.toLowerCase();
-      const matchCode = currentTeacherObj?.code && s.teacherCode && s.teacherCode.toLowerCase() === currentTeacherObj.code.toLowerCase();
+      const matchName =
+        normalizedTeacherName &&
+        (s.teacherName || '').trim().toLowerCase() === normalizedTeacherName;
+      const matchCode =
+        normalizedTeacherCode &&
+        s.teacherCode &&
+        s.teacherCode.trim().toLowerCase() === normalizedTeacherCode;
 
       if (!matchId && !matchName && !matchCode) return false;
 
@@ -144,18 +158,29 @@ export const PembelajaranSayaView: React.FC = () => {
     };
   }, [teacherBaseSchedules, getScheduleStatus]);
 
-  // Handlers untuk simpan batch (rentang jam mulai s/d selesai) & hapus jadwal
-  const handleSaveBatch = (schedulesToSave: ScheduleItem[]) => {
-    if (editingSchedule && schedulesToSave.length === 1) {
-      updateSchedule(schedulesToSave[0]);
+  // Handlers untuk simpan batch (rentang jam mulai s/d selesai) secara atomik ke Cloud Firestore
+  const handleSaveBatch = async (schedulesToSave: ScheduleItem[]) => {
+    const res = await saveSchedulesBatch(schedulesToSave, editingSchedule?.id);
+    const savedWeek = schedulesToSave[0]?.weekType;
+    if (
+      savedWeek &&
+      savedWeek !== 'ALL' &&
+      selectedWeek !== 'ALL' &&
+      ((selectedWeek === 'ACTIVE' && effectiveWeekType !== 'ALL' && savedWeek !== effectiveWeekType) ||
+        (selectedWeek !== 'ACTIVE' && savedWeek !== selectedWeek))
+    ) {
+      setSelectedWeek(savedWeek as any);
+    }
+
+    if (res.success) {
+      setSaveToast({
+        type: 'success',
+        text: `${res.savedCount} slot jadwal berhasil disimpan dan tersinkron ke Cloud Firestore!`,
+      });
     } else {
-      // Jika sebelumnya sedang mengedit, hapus jadwal lama terlebih dahulu agar tidak duplikat
-      if (editingSchedule) {
-        deleteSchedule(editingSchedule.id);
-      }
-      // Tambahkan seluruh jadwal rentang baru
-      schedulesToSave.forEach((sch) => {
-        addSchedule(sch);
+      setSaveToast({
+        type: 'error',
+        text: `Jadwal tersimpan di browser lokal, namun gagal sinkron Cloud: ${res.error || 'Periksa koneksi internet.'}`,
       });
     }
   };
@@ -164,11 +189,40 @@ export const PembelajaranSayaView: React.FC = () => {
     if (deleteTargetSchedule) {
       deleteSchedule(deleteTargetSchedule.id);
       setDeleteTargetSchedule(null);
+      setSaveToast({
+        type: 'success',
+        text: 'Jadwal berhasil dihapus dan disinkronkan ke Cloud Firestore.',
+      });
     }
   };
 
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto">
+      {saveToast && (
+        <div
+          className={`rounded-2xl px-4 py-3 text-xs font-bold border flex items-center justify-between gap-3 shadow-sm ${
+            saveToast.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {saveToast.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{saveToast.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSaveToast(null)}
+            className="text-[11px] underline cursor-pointer"
+          >
+            Tutup
+          </button>
+        </div>
+      )}
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-[#0B1E2E] via-[#0f283d] to-[#122F47] rounded-3xl p-6 md:p-8 text-white shadow-md flex flex-wrap items-center justify-between gap-6 border border-slate-800">
         <div className="space-y-2 max-w-xl">
@@ -561,6 +615,11 @@ export const PembelajaranSayaView: React.FC = () => {
         subjects={subjects}
         rooms={rooms}
         editingSchedule={editingSchedule}
+        defaultWeekType={
+          effectiveWeekType === 'P10_NORM_P11_PROD' || effectiveWeekType === 'P10_PROD_P11_NORM'
+            ? effectiveWeekType
+            : realtimeWeekType
+        }
         onSaveBatch={handleSaveBatch}
       />
 

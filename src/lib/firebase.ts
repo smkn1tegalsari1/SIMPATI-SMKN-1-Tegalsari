@@ -21,6 +21,67 @@ try {
 
 export const db = firestoreInstance;
 
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function buildFirestoreErrorInfo(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): FirestoreErrorInfo {
+  return {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: null,
+      email: null,
+      emailVerified: null,
+      isAnonymous: null,
+      tenantId: null,
+      providerInfo: [],
+    },
+    operationType,
+    path,
+  };
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+  options?: { rethrow?: boolean }
+): FirestoreErrorInfo {
+  const errInfo = buildFirestoreErrorInfo(error, operationType, path);
+  const serialized = JSON.stringify(errInfo);
+  console.error('Firestore Error: ', serialized);
+  if (options?.rethrow) {
+    throw new Error(serialized);
+  }
+  return errInfo;
+}
+
 // Helper penguji koneksi cloud Firestore
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
@@ -29,6 +90,10 @@ export async function testFirestoreConnection(): Promise<boolean> {
   } catch (err: any) {
     if (err instanceof Error && err.message.includes('the client is offline')) {
       console.warn('[SIMPATI Cloud] Client Firestore dalam mode offline.');
+      return false;
+    }
+    if (err instanceof Error && err.message.includes('Missing or insufficient permissions')) {
+      handleFirestoreError(err, OperationType.GET, 'simpati_data/ping');
       return false;
     }
     // Jika dokumen belum ada, koneksi tetap berhasil

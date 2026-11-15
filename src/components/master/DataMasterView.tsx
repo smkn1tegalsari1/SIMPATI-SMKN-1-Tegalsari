@@ -569,6 +569,16 @@ export const DataMasterView: React.FC = () => {
     }
   }, [rooms, schRoomId]);
 
+  useEffect(() => {
+    if (isAddScheduleOpen) {
+      const targetWeek: ScheduleWeekType =
+        effectiveWeekType === 'P10_NORM_P11_PROD' || effectiveWeekType === 'P10_PROD_P11_NORM'
+          ? effectiveWeekType
+          : realtimeWeekType;
+      setSchWeekType(targetWeek);
+    }
+  }, [isAddScheduleOpen, effectiveWeekType, realtimeWeekType]);
+
   // Handlers for Manual Add
   const handleSaveTeacher = (e: React.FormEvent) => {
     e.preventDefault();
@@ -4449,6 +4459,11 @@ export const DataMasterView: React.FC = () => {
         rooms={rooms}
         teachers={teachers}
         subjects={subjects}
+        defaultWeekType={
+          effectiveWeekType === 'P10_NORM_P11_PROD' || effectiveWeekType === 'P10_PROD_P11_NORM'
+            ? effectiveWeekType
+            : realtimeWeekType
+        }
         onImport={handleImportScheduleData}
       />
 
