@@ -33,6 +33,7 @@ import {
   ChevronRight,
   Lock,
   Save,
+  HardDriveDownload,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
@@ -129,6 +130,7 @@ export const DataMasterView: React.FC = () => {
     cloudBackupSummary,
     createCloudBackup,
     restoreFromCloudBackup,
+    setActiveMenu,
   } = useApp();
 
   const [isBackingUpCloud, setIsBackingUpCloud] = useState(false);
@@ -1145,6 +1147,16 @@ export const DataMasterView: React.FC = () => {
 
         {/* Tombol Pemeliharaan Database & Cadangan Cloud */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveMenu('backup_database')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-amber-900 hover:text-slate-950 bg-amber-50 hover:bg-amber-200 border border-amber-300 text-xs font-extrabold rounded-xl transition cursor-pointer"
+            title="Buka Menu Lengkap Backup & Impor Database (.JSON / .XLSX)"
+          >
+            <HardDriveDownload className="w-3.5 h-3.5 text-amber-700" />
+            <span>Backup & Impor DB</span>
+          </button>
+
           {(teachers.length > 0 || classes.length > 0 || schedules.length > 0) && (
             <button
               type="button"

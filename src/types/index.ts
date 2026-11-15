@@ -204,6 +204,7 @@ export type ActiveMenu =
   | 'guru_piket'
   | 'dashboard_pimpinan'
   | 'data_master'
+  | 'backup_database'
   | 'laporan'
   | 'manajemen_akun'
   | 'mode_tv';

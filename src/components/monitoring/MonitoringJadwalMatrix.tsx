@@ -63,7 +63,7 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
   const [selectedDay, setSelectedDay] = useState<number>(1); // 1 = Senin (sesuai dokumen lampiran)
   const [selectedWeekMode, setSelectedWeekMode] = useState<
     'P10_NORM_P11_PROD' | 'P10_PROD_P11_NORM' | 'AUTO' | 'PRODUKTIF' | 'NORMATIF'
-  >('P10_NORM_P11_PROD');
+  >('AUTO');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [syncToast, setSyncToast] = useState<string | null>(null);
 
@@ -1111,7 +1111,7 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
                             periodIndex: activeSlotModal.periodIndex,
                             timeRange: p?.range || '06:45 - 07:20',
                             startTime: p?.time || '06:45',
-                            endTime: p?.range?.split('-')[1]?.trim() || '07:20',
+                            endTime: p?.range?.replace(/[–—]/g, '-').split('-')[1]?.trim() || '07:20',
                             teacherId: tch.id,
                             teacherName: tch.name,
                             teacherCode: tch.code,
@@ -1128,6 +1128,8 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
                                 : selectedWeekMode === 'P10_NORM_P11_PROD' || selectedWeekMode === 'PRODUKTIF'
                                 ? 'P10_NORM_P11_PROD'
                                 : selectedWeekMode === 'P10_PROD_P11_NORM' || selectedWeekMode === 'NORMATIF'
+                                ? 'P10_PROD_P11_NORM'
+                                : effectiveWeekType === 'ALL'
                                 ? 'P10_PROD_P11_NORM'
                                 : effectiveWeekType,
                           };

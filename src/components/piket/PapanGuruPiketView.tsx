@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   ShieldCheck,
@@ -17,6 +17,7 @@ import {
 import * as XLSX from 'xlsx';
 import { ScheduleItem, ScheduleLessonStatus } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
+import { PERIOD_TIMES } from '../../data/initialData';
 
 export const PapanGuruPiketView: React.FC = () => {
   const {
@@ -60,7 +61,15 @@ export const PapanGuruPiketView: React.FC = () => {
   }, [teachers, userAccounts, currentDayName]);
 
   // State Filter Real-Time
+  const userChangedDayRef = useRef(false);
   const [selectedDay, setSelectedDay] = useState<string>(() => (hasSchedulesToday ? 'TODAY' : 'ALL'));
+
+  useEffect(() => {
+    if (!userChangedDayRef.current && hasSchedulesToday && selectedDay === 'ALL') {
+      setSelectedDay('TODAY');
+    }
+  }, [hasSchedulesToday, selectedDay]);
+
   const [selectedPeriod, setSelectedPeriod] = useState<number | 'current' | 'all'>('all');
   const [selectedWeek, setSelectedWeek] = useState<'ACTIVE' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('ACTIVE');
   const [selectedStatusTab, setSelectedStatusTab] = useState<'ALL' | ScheduleLessonStatus>('ALL');
@@ -316,7 +325,10 @@ export const PapanGuruPiketView: React.FC = () => {
               <span className="font-semibold text-slate-600">Hari:</span>
               <select
                 value={selectedDay}
-                onChange={(e) => setSelectedDay(e.target.value)}
+                onChange={(e) => {
+                  userChangedDayRef.current = true;
+                  setSelectedDay(e.target.value);
+                }}
                 className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
               >
                 <option value="TODAY">⚡ Hari Ini ({currentDayName})</option>
@@ -348,9 +360,9 @@ export const PapanGuruPiketView: React.FC = () => {
               >
                 <option value="all">Semua Jam Pelajaran</option>
                 <option value="current">⚡ Jam Aktif (Jam Ke-{currentPeriod})</option>
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((p) => (
-                  <option key={p} value={p}>
-                    Jam Ke-{p} {p === currentPeriod ? '(Sedang Berlangsung)' : ''}
+                {PERIOD_TIMES.map((pt) => (
+                  <option key={pt.period} value={pt.period}>
+                    Jam Ke-{pt.period} {pt.period === currentPeriod ? '(Sedang Berlangsung)' : ''}
                   </option>
                 ))}
               </select>

@@ -12,6 +12,7 @@ import { LaporanView } from './components/laporan/LaporanView';
 import { ManajemenAkunView } from './components/manajemen/ManajemenAkunView';
 import { JurnalMengajarView } from './components/jurnal/JurnalMengajarView';
 import { ModeTVSekolahView } from './components/tv/ModeTVSekolahView';
+import { BackupImporDatabaseView } from './components/backup/BackupImporDatabaseView';
 import { PublicNavbar } from './components/layout/PublicNavbar';
 import { LoginPage } from './components/auth/LoginPage';
 import { ShieldAlert, ArrowLeft } from 'lucide-react';
@@ -117,6 +118,7 @@ const MainAppContent: React.FC = () => {
               {activeMenu === 'guru_piket' && <PapanGuruPiketView />}
               {activeMenu === 'dashboard_pimpinan' && <DashboardPimpinanView />}
               {activeMenu === 'data_master' && <DataMasterView />}
+              {activeMenu === 'backup_database' && <BackupImporDatabaseView />}
               {activeMenu === 'laporan' && <LaporanView />}
               {activeMenu === 'manajemen_akun' && <ManajemenAkunView />}
             </>

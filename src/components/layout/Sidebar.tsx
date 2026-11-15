@@ -14,6 +14,7 @@ import {
   GraduationCap,
   Sparkles,
   KeyRound,
+  HardDriveDownload,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ActiveMenu, UserRole } from '../../types';
@@ -41,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = () => {
     { id: 'monitoring', label: 'Monitoring Pembelajaran', icon: Tv, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },
     { id: 'dashboard_pimpinan', label: 'Dashboard Pimpinan', icon: BarChart3, allowedRoles: ['admin', 'pimpinan'] },
     { id: 'data_master', label: 'Data Master', icon: Database, allowedRoles: ['admin'] },
+    { id: 'backup_database', label: 'Backup & Impor DB', icon: HardDriveDownload, allowedRoles: ['admin'] },
     { id: 'laporan', label: 'Laporan', icon: FileText, allowedRoles: ['admin', 'piket', 'pimpinan'] },
     { id: 'manajemen_akun', label: 'Manajemen Akun', icon: Users, allowedRoles: ['admin'] },
     { id: 'mode_tv', label: 'Dashboard TV', icon: Tv2, allowedRoles: ['admin', 'guru', 'piket', 'pimpinan'] },

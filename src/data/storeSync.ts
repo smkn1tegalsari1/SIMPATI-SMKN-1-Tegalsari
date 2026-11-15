@@ -134,23 +134,15 @@ export function pickAuthoritativeStore({
     };
   }
 
-  // 3. Keduanya memiliki data sekolah nyata -> bandingkan timestamp valid
+  // 3. Keduanya memiliki data sekolah nyata -> Cloud Firestore terpusat selalu menjadi acuan otoritatif
+  // agar container server lokal atau clock-skew perangkat lain TIDAK PERNAH menimpa jadwal/jurnal di Cloud.
   if (hasCloud && hasServer && cloudMeaningful && serverMeaningful) {
-    if (serverTs > cloudTs) {
-      return {
-        source: 'server',
-        chosen: serverData!,
-        syncCloudFromServer: true,
-        hydrateServerFromCloud: false,
-        reason: 'Data server lokal memiliki timestamp lebih baru daripada Cloud.',
-      };
-    }
     return {
       source: 'cloud',
       chosen: cloudData!,
       syncCloudFromServer: false,
-      hydrateServerFromCloud: cloudTs > serverTs,
-      reason: 'Data Cloud Firestore merupakan versi terbaru dan menjadi acuan utama.',
+      hydrateServerFromCloud: cloudTs > serverTs || countStoreEntities(cloudData) !== countStoreEntities(serverData),
+      reason: 'Cloud Firestore menjadi sumber otoritatif utama agar data antar perangkat tidak saling menimpa.',
     };
   }
 
@@ -272,4 +264,133 @@ export function mergeSchedulesWithDelta(
   }
   return dedupedReversed.reverse();
 }
+
+export interface JournalDelta {
+  upserts: any[];
+  deleteIds: string[];
+  replaceAll?: any[];
+}
+
+export function createEmptyJournalDelta(): JournalDelta {
+  return {
+    upserts: [],
+    deleteIds: [],
+  };
+}
+
+export function hasJournalDeltaChanges(delta?: JournalDelta | null): boolean {
+  if (!delta) return false;
+  if (delta.replaceAll !== undefined) return true;
+  if (delta.upserts.length > 0) return true;
+  if (delta.deleteIds.length > 0) return true;
+  return false;
+}
+
+/**
+ * Menggabungkan perubahan jurnal mengajar secara atomik di atas data Cloud terbaru
+ * agar penginputan jurnal oleh banyak guru bersamaan tidak saling menimpa.
+ */
+export function mergeJournalsWithDelta(
+  remoteJournals: any[] | undefined | null,
+  delta: JournalDelta
+): any[] {
+  if (delta.replaceAll !== undefined) {
+    return [...delta.replaceAll];
+  }
+
+  let result = Array.isArray(remoteJournals) ? [...remoteJournals] : [];
+
+  if (delta.deleteIds.length > 0) {
+    const deleteSet = new Set(delta.deleteIds);
+    result = result.filter((j) => !j?.id || !deleteSet.has(j.id));
+  }
+
+  if (delta.upserts.length > 0) {
+    const upsertMap = new Map<string, any>();
+    for (const item of delta.upserts) {
+      if (item && item.id) {
+        upsertMap.set(item.id, item);
+      }
+    }
+    const seen = new Set<string>();
+    result = result.map((existing) => {
+      if (existing?.id && upsertMap.has(existing.id)) {
+        seen.add(existing.id);
+        return upsertMap.get(existing.id);
+      }
+      return existing;
+    });
+    // Jurnal baru ditaruh di paling atas sesuai urutan terbaru
+    const inserted: any[] = [];
+    for (const item of delta.upserts) {
+      if (item?.id && !seen.has(item.id)) {
+        seen.add(item.id);
+        inserted.push(item);
+      }
+    }
+    result = [...inserted, ...result];
+  }
+
+  const deduped: any[] = [];
+  const seenFinal = new Set<string>();
+  for (const item of result) {
+    if (!item) continue;
+    if (item.id) {
+      if (seenFinal.has(item.id)) continue;
+      seenFinal.add(item.id);
+    }
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+export interface AttendanceDelta {
+  upserts: Record<string, any>;
+  deleteKeys: string[];
+  replaceAll?: Record<string, any>;
+}
+
+export function createEmptyAttendanceDelta(): AttendanceDelta {
+  return {
+    upserts: {},
+    deleteKeys: [],
+  };
+}
+
+export function hasAttendanceDeltaChanges(delta?: AttendanceDelta | null): boolean {
+  if (!delta) return false;
+  if (delta.replaceAll !== undefined) return true;
+  if (Object.keys(delta.upserts).length > 0) return true;
+  if (delta.deleteKeys.length > 0) return true;
+  return false;
+}
+
+/**
+ * Menggabungkan catatan kehadiran/konfirmasi KBM guru & piket secara atomik
+ * berdasarkan scheduleId key agar tidak saling menimpa antar guru/piket.
+ */
+export function mergeAttendanceWithDelta(
+  remoteAttendance: Record<string, any> | undefined | null,
+  delta: AttendanceDelta
+): Record<string, any> {
+  if (delta.replaceAll !== undefined) {
+    return { ...delta.replaceAll };
+  }
+
+  const result: Record<string, any> =
+    remoteAttendance && typeof remoteAttendance === 'object' ? { ...remoteAttendance } : {};
+
+  for (const key of delta.deleteKeys) {
+    delete result[key];
+  }
+
+  for (const [key, val] of Object.entries(delta.upserts)) {
+    if (val !== undefined) {
+      result[key] = val;
+    }
+  }
+
+  return result;
+}
+
 

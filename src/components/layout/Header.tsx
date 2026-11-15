@@ -59,29 +59,38 @@ export const Header: React.FC<HeaderProps> = () => {
 
       {/* Middle & Right Section: Controls, Week Rotation, & Clock */}
       <div className="flex flex-wrap items-center gap-2.5 md:gap-4">
-        {/* Selector Rotasi Pekan (K10 Produktif & K11 NormAdaptif vs K10 NormAdaptif & K11 Produktif) */}
+        {/* Selector Rotasi Pekan: hanya Admin yang bisa mengubah pengaturan global sekolah; peran lain melihat badge read-only */}
         <div className="flex items-center gap-1.5 bg-gradient-to-r from-amber-50 to-cyan-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
           <CalendarDays className="w-3.5 h-3.5 text-cyan-700 shrink-0" />
           <span className="font-bold text-slate-700 hidden lg:inline">Rotasi:</span>
-          <select
-            value={activeWeekFilter}
-            onChange={(e) => setActiveWeekFilter(e.target.value as any)}
-            className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer max-w-[220px] md:max-w-[260px] truncate"
-            title="Pilih rotasi pekan: Otomatis sesuai kalender laptop, atau pilih manual"
-          >
-            <option value="AUTO">
-              ⚡ Otomatis Real-Time ({realtimeWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})
-            </option>
-            <option value="P10_PROD_P11_NORM">
-              🟢 Pekan K10 Produktif & K11 NormAdaptif
-            </option>
-            <option value="P10_NORM_P11_PROD">
-              🟣 Pekan K10 NormAdaptif & K11 Produktif
-            </option>
-            <option value="ALL">
-              🌐 Semua Pekan (Tampilkan Semua)
-            </option>
-          </select>
+          {currentUser.role === 'admin' ? (
+            <select
+              value={activeWeekFilter}
+              onChange={(e) => setActiveWeekFilter(e.target.value as any)}
+              className="bg-transparent text-xs font-extrabold text-slate-900 outline-none cursor-pointer max-w-[220px] md:max-w-[260px] truncate"
+              title="Pilih rotasi pekan global sekolah: Otomatis sesuai kalender, atau atur manual"
+            >
+              <option value="AUTO">
+                ⚡ Otomatis Real-Time ({realtimeWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})
+              </option>
+              <option value="P10_PROD_P11_NORM">
+                🟢 Pekan K10 Produktif & K11 NormAdaptif
+              </option>
+              <option value="P10_NORM_P11_PROD">
+                🟣 Pekan K10 NormAdaptif & K11 Produktif
+              </option>
+              <option value="ALL">
+                🌐 Semua Pekan (Tampilkan Semua)
+              </option>
+            </select>
+          ) : (
+            <span
+              className="text-xs font-extrabold text-slate-900 max-w-[220px] md:max-w-[260px] truncate"
+              title="Rotasi pekan aktif sekolah (diatur oleh Administrator)"
+            >
+              {getWeekTypeShortLabel(effectiveWeekType)}
+            </span>
+          )}
         </div>
 
         {/* Time Simulator Picker */}

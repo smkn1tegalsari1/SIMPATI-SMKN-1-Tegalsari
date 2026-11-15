@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Clock,
@@ -20,6 +20,7 @@ import {
 import { ScheduleItem, ScheduleLessonStatus } from '../../types';
 import { ScheduleStatusBadge } from '../common/ScheduleStatusBadge';
 import { areDepartmentsEquivalent, resolveDepartmentCode } from '../../data/departmentUtils';
+import { PERIOD_TIMES } from '../../data/initialData';
 
 export const DashboardView: React.FC = () => {
   const {
@@ -49,7 +50,15 @@ export const DashboardView: React.FC = () => {
   }, [schedules, todayUpper, currentDayIndex]);
 
   // State Filter
+  const userChangedDayRef = useRef(false);
   const [filterDay, setFilterDay] = useState<string>(() => (hasSchedulesToday ? 'TODAY' : 'ALL'));
+
+  useEffect(() => {
+    if (!userChangedDayRef.current && hasSchedulesToday && filterDay === 'ALL') {
+      setFilterDay('TODAY');
+    }
+  }, [hasSchedulesToday, filterDay]);
+
   const [tableWeekFilter, setTableWeekFilter] = useState<'ACTIVE' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('ACTIVE');
   const [filterPeriod, setFilterPeriod] = useState<number | 'all'>('all');
   const [filterDept, setFilterDept] = useState<string>('all');
@@ -372,23 +381,29 @@ export const DashboardView: React.FC = () => {
             <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
           </button>
 
-          <button
-            onClick={() => setActiveMenu('pembelajaran_saya')}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer"
-          >
-            <BookOpen className="w-3.5 h-3.5 text-cyan-600" />
-            <span>Pembelajaran Saya</span>
-            <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-          </button>
+          {(currentUser.role === 'admin' || currentUser.role === 'guru') && (
+            <button
+              onClick={() => setActiveMenu('pembelajaran_saya')}
+              className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-cyan-600" />
+              <span>Pembelajaran Saya</span>
+              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+          )}
 
-          <button
-            onClick={() => setActiveMenu('guru_piket')}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Papan Guru Piket</span>
-            <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-          </button>
+          {(currentUser.role === 'admin' ||
+            currentUser.role === 'piket' ||
+            (currentUser.role === 'guru' && currentUser.isPiketToday)) && (
+            <button
+              onClick={() => setActiveMenu('guru_piket')}
+              className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Papan Guru Piket</span>
+              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+          )}
         </div>
 
         {/* 3 Status Filter Tabs */}
@@ -442,6 +457,7 @@ export const DashboardView: React.FC = () => {
               <select
                 value={filterDay}
                 onChange={(e) => {
+                  userChangedDayRef.current = true;
                   setFilterDay(e.target.value);
                   setCurrentPage(1);
                 }}
@@ -470,9 +486,9 @@ export const DashboardView: React.FC = () => {
                 className="bg-transparent font-bold text-slate-800 outline-none cursor-pointer"
               >
                 <option value="all">Semua Jam</option>
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((p) => (
-                  <option key={p} value={p}>
-                    Jam Ke-{p} {p === currentPeriod ? '(Aktif)' : ''}
+                {PERIOD_TIMES.map((pt) => (
+                  <option key={pt.period} value={pt.period}>
+                    Jam Ke-{pt.period} {pt.period === currentPeriod ? '(Aktif)' : ''}
                   </option>
                 ))}
               </select>
