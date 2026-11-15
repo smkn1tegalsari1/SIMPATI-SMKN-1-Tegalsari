@@ -92,29 +92,33 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
   // Grade title helper
   const gradeRoman = selectedGrade === 10 ? 'X' : selectedGrade === 11 ? 'XI' : 'XII';
 
-  // Week label helper
-  const currentWeekLabel = useMemo(() => {
+  // Target week terresolusi dari dropdown Rotasi
+  const resolvedTargetWeek = useMemo<'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>(() => {
     if (selectedWeekMode === 'P10_NORM_P11_PROD' || selectedWeekMode === 'PRODUKTIF') {
-      return 'Pekan 10 Normada 11 Produktif';
+      return 'P10_NORM_P11_PROD';
     }
     if (selectedWeekMode === 'P10_PROD_P11_NORM' || selectedWeekMode === 'NORMATIF') {
+      return 'P10_PROD_P11_NORM';
+    }
+    return effectiveWeekType;
+  }, [selectedWeekMode, effectiveWeekType]);
+
+  // Week label helper
+  const currentWeekLabel = useMemo(() => {
+    if (resolvedTargetWeek === 'P10_NORM_P11_PROD') {
+      return 'Pekan 10 Normada 11 Produktif';
+    }
+    if (resolvedTargetWeek === 'P10_PROD_P11_NORM') {
       return 'Pekan 10 Produktif 11 Normada';
     }
-    return effectiveWeekType === 'P10_PROD_P11_NORM'
-      ? 'Pekan 10 Produktif 11 Normada'
-      : 'Pekan 10 Normada 11 Produktif';
-  }, [selectedWeekMode, effectiveWeekType]);
+    return 'Semua Rotasi Pekan';
+  }, [resolvedTargetWeek]);
 
   // Helper cek kecocokan pekan rotasi
   const isWeekMatching = (sWeek?: string): boolean => {
+    if (resolvedTargetWeek === 'ALL') return true;
     if (!sWeek || sWeek === 'ALL') return true;
-    const targetWeek =
-      selectedWeekMode === 'AUTO'
-        ? effectiveWeekType
-        : selectedWeekMode === 'P10_NORM_P11_PROD' || selectedWeekMode === 'PRODUKTIF'
-        ? 'P10_NORM_P11_PROD'
-        : 'P10_PROD_P11_NORM';
-    return sWeek === targetWeek;
+    return sWeek === resolvedTargetWeek;
   };
 
   // Generate matrix data REAL-TIME dari Firestore DB masterClasses dan schedules
@@ -127,7 +131,7 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
 
     // Ambil daftar kelas dari database master jika ada
     const fallbackProgCodes = VOCATIONAL_PROGRAMS.map((p) => p.code);
-    const dbClasses = masterClasses.filter((c) => c.grade === selectedGrade);
+    const dbClasses = masterClasses.filter((c) => Number(c.grade) === selectedGrade);
     const targetClasses: { id: string; className: string; programCode: string; programName: string }[] =
       dbClasses.length > 0
         ? dbClasses.map((c) => {
@@ -225,13 +229,73 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
   }, [
     selectedGrade,
     selectedDay,
-    selectedWeekMode,
+    resolvedTargetWeek,
     schedules,
     masterClasses,
     masterDepartments,
     teachers,
-    effectiveWeekType,
   ]);
+
+  // Deteksi perbedaan isi jadwal antar kedua rotasi pekan untuk memberi peringatan yang jelas
+  const rotationMismatchNotice = useMemo(() => {
+    if (resolvedTargetWeek === 'ALL') return null;
+
+    const gradeClassIds = new Set(matrixRows.map((r) => r.id));
+    const gradeClassNames = new Set(matrixRows.map((r) => r.className.trim().toUpperCase()));
+
+    const otherWeek: 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' =
+      resolvedTargetWeek === 'P10_PROD_P11_NORM' ? 'P10_NORM_P11_PROD' : 'P10_PROD_P11_NORM';
+
+    let currentGradeSlots = 0;
+    let otherGradeSlots = 0;
+    let currentSchoolSlots = 0;
+    let otherSchoolSlots = 0;
+
+    schedules.forEach((s) => {
+      const w = s.weekType || 'ALL';
+      const matchesCurrent = w === 'ALL' || w === resolvedTargetWeek;
+      const matchesOther = w === 'ALL' || w === otherWeek;
+
+      if (matchesCurrent) currentSchoolSlots++;
+      if (matchesOther) otherSchoolSlots++;
+
+      const inThisGrade =
+        gradeClassIds.has(s.classId) ||
+        gradeClassNames.has((s.className || '').trim().toUpperCase());
+      if (inThisGrade) {
+        if (matchesCurrent) currentGradeSlots++;
+        if (matchesOther) otherGradeSlots++;
+      }
+    });
+
+    if (currentGradeSlots === 0 && otherGradeSlots > 0) {
+      return {
+        otherWeek,
+        otherWeekLabel:
+          otherWeek === 'P10_PROD_P11_NORM'
+            ? 'Pekan 10 Produktif 11 Normada'
+            : 'Pekan 10 Normada 11 Produktif',
+        currentWeekLabel,
+        otherCount: otherGradeSlots,
+        scopeLabel: `Kelas ${gradeRoman}`,
+      };
+    }
+
+    if (currentSchoolSlots === 0 && otherSchoolSlots > 0) {
+      return {
+        otherWeek,
+        otherWeekLabel:
+          otherWeek === 'P10_PROD_P11_NORM'
+            ? 'Pekan 10 Produktif 11 Normada'
+            : 'Pekan 10 Normada 11 Produktif',
+        currentWeekLabel,
+        otherCount: otherSchoolSlots,
+        scopeLabel: 'Seluruh Tingkat',
+      };
+    }
+
+    return null;
+  }, [matrixRows, schedules, resolvedTargetWeek, currentWeekLabel, gradeRoman]);
 
   // Daftar Program Keahlian di sidebar disinkronkan dari Master Jurusan & kelas aktif
   const sidebarPrograms = useMemo(() => {
@@ -423,7 +487,13 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
               <option value="P10_NORM_P11_PROD">Pekan 10 Normada 11 Produktif</option>
               <option value="P10_PROD_P11_NORM">Pekan 10 Produktif 11 Normada</option>
               <option value="AUTO">
-                ⚡ Ikuti Kalender ({effectiveWeekType === 'P10_PROD_P11_NORM' ? '10 Prod · 11 Normada' : '10 Normada · 11 Prod'})
+                ⚡ Ikuti Kalender (
+                {effectiveWeekType === 'P10_PROD_P11_NORM'
+                  ? '10 Prod · 11 Normada'
+                  : effectiveWeekType === 'P10_NORM_P11_PROD'
+                  ? '10 Normada · 11 Prod'
+                  : 'Semua Pekan'}
+                )
               </option>
             </select>
           </div>
@@ -597,6 +667,27 @@ export const MonitoringJadwalMatrix: React.FC<MonitoringJadwalMatrixProps> = ({
           </div>
         </div>
       </section>
+
+      {/* Banner Informasi Rotasi Pekan Kosong vs Terisi */}
+      {rotationMismatchNotice && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-950 rounded-2xl px-4 py-3 text-xs flex flex-wrap items-center justify-between gap-3 shadow-xs print:hidden">
+          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+            <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              Saat ini Matrix menampilkan <strong>{rotationMismatchNotice.currentWeekLabel}</strong> yang belum memiliki jadwal terinput (0 slot untuk {rotationMismatchNotice.scopeLabel}), sedangkan pada{' '}
+              <strong>{rotationMismatchNotice.otherWeekLabel}</strong> sudah tersimpan{' '}
+              <strong>{rotationMismatchNotice.otherCount} slot jadwal</strong>.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedWeekMode(rotationMismatchNotice.otherWeek)}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs shadow-xs transition cursor-pointer shrink-0"
+          >
+            Tampilkan {rotationMismatchNotice.otherWeekLabel}
+          </button>
+        </div>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* 4. MAIN CONTENT AREA: LEFT SIDEBAR + RIGHT MATRIX TABLE       */}

@@ -215,7 +215,7 @@ interface AppContextType {
   deleteSchedule: (id: string) => void;
   saveSchedulesBatch: (
     items: ScheduleItem[],
-    replaceId?: string
+    replaceId?: string | string[]
   ) => Promise<{ success: boolean; error?: string; savedCount: number }>;
   bulkDeleteSchedules: (ids: string[]) => void;
   bulkUpdateSchedules: (ids: string[], updates: Partial<ScheduleItem>) => void;
@@ -2744,10 +2744,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const saveSchedulesBatch = async (
     items: ScheduleItem[],
-    replaceId?: string
+    replaceId?: string | string[]
   ): Promise<{ success: boolean; error?: string; savedCount: number }> => {
     const cleanItems = stripUndefined(items);
-    const deleteIds = replaceId ? [replaceId] : [];
+    const deleteIds = Array.isArray(replaceId)
+      ? replaceId.filter(Boolean)
+      : replaceId
+      ? [replaceId]
+      : [];
     const delta: Partial<ScheduleDelta> = {
       upserts: cleanItems,
       deleteIds,

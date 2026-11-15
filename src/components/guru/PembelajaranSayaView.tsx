@@ -105,6 +105,34 @@ export const PembelajaranSayaView: React.FC = () => {
 
   const effectiveTeacherId = currentTeacherObj.id;
 
+  // Hitung jumlah jadwal guru per rotasi pekan agar mudah terlihat bila jadwal tersimpan di pekan lain
+  const teacherWeekCounts = useMemo(() => {
+    const normalizedTeacherName = (currentTeacherObj?.name || '').trim().toLowerCase();
+    const normalizedTeacherCode = (currentTeacherObj?.code || '').trim().toLowerCase();
+    let total = 0;
+    let p10Prod = 0;
+    let p10Norm = 0;
+
+    schedules.forEach((s) => {
+      const matchId = s.teacherId === effectiveTeacherId;
+      const matchName =
+        normalizedTeacherName &&
+        (s.teacherName || '').trim().toLowerCase() === normalizedTeacherName;
+      const matchCode =
+        normalizedTeacherCode &&
+        s.teacherCode &&
+        s.teacherCode.trim().toLowerCase() === normalizedTeacherCode;
+      if (!matchId && !matchName && !matchCode) return;
+
+      total++;
+      const w = s.weekType || 'ALL';
+      if (w === 'ALL' || w === 'P10_PROD_P11_NORM') p10Prod++;
+      if (w === 'ALL' || w === 'P10_NORM_P11_PROD') p10Norm++;
+    });
+
+    return { total, p10Prod, p10Norm };
+  }, [schedules, effectiveTeacherId, currentTeacherObj]);
+
   const teacherBaseSchedules = useMemo(() => {
     const normalizedTeacherName = (currentTeacherObj?.name || '').trim().toLowerCase();
     const normalizedTeacherCode = (currentTeacherObj?.code || '').trim().toLowerCase();
@@ -159,8 +187,14 @@ export const PembelajaranSayaView: React.FC = () => {
   }, [teacherBaseSchedules, getScheduleStatus]);
 
   // Handlers untuk simpan batch (rentang jam mulai s/d selesai) secara atomik ke Cloud Firestore
-  const handleSaveBatch = async (schedulesToSave: ScheduleItem[]) => {
-    const res = await saveSchedulesBatch(schedulesToSave, editingSchedule?.id);
+  const handleSaveBatch = async (schedulesToSave: ScheduleItem[], replaceIds?: string[]) => {
+    const deleteIds =
+      replaceIds && replaceIds.length > 0
+        ? replaceIds
+        : editingSchedule?.id
+        ? [editingSchedule.id]
+        : undefined;
+    const res = await saveSchedulesBatch(schedulesToSave, deleteIds);
     const savedWeek = schedulesToSave[0]?.weekType;
     if (
       savedWeek &&
@@ -320,17 +354,54 @@ export const PembelajaranSayaView: React.FC = () => {
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>Pekan Aktif ({effectiveWeekType === 'P10_PROD_P11_NORM' ? 'K10 Prod · K11 Norm' : 'K10 Norm · K11 Prod'})</span>
+            <span>
+              Pekan Aktif (
+              {effectiveWeekType === 'P10_PROD_P11_NORM'
+                ? 'K10 Prod · K11 Norm'
+                : effectiveWeekType === 'P10_NORM_P11_PROD'
+                ? 'K10 Norm · K11 Prod'
+                : 'Semua Pekan'}
+              )
+            </span>
+          </button>
+          <button
+            onClick={() => setSelectedWeek('P10_PROD_P11_NORM')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              selectedWeek === 'P10_PROD_P11_NORM'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+            }`}
+          >
+            <span>K10 Prod · K11 Norm</span>
+            <span className="px-1.5 py-0.5 rounded bg-black/10 text-[10px] tabular-nums">
+              {teacherWeekCounts.p10Prod}
+            </span>
+          </button>
+          <button
+            onClick={() => setSelectedWeek('P10_NORM_P11_PROD')}
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
+              selectedWeek === 'P10_NORM_P11_PROD'
+                ? 'bg-indigo-700 text-white shadow-xs'
+                : 'bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100'
+            }`}
+          >
+            <span>K10 Norm · K11 Prod</span>
+            <span className="px-1.5 py-0.5 rounded bg-black/10 text-[10px] tabular-nums">
+              {teacherWeekCounts.p10Norm}
+            </span>
           </button>
           <button
             onClick={() => setSelectedWeek('ALL')}
-            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl font-bold transition cursor-pointer flex items-center gap-1.5 ${
               selectedWeek === 'ALL'
                 ? 'bg-[#0B1E2E] text-white shadow-xs'
                 : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
             }`}
           >
-            Semua Pekan
+            <span>Semua Pekan</span>
+            <span className="px-1.5 py-0.5 rounded bg-black/10 text-[10px] tabular-nums">
+              {teacherWeekCounts.total}
+            </span>
           </button>
         </div>
 
@@ -449,21 +520,38 @@ export const PembelajaranSayaView: React.FC = () => {
             <Calendar className="w-8 h-8" />
           </div>
           <div className="space-y-1">
-            <h3 className="font-extrabold text-lg text-slate-900">Belum Ada Jadwal Pelajaran</h3>
+            <h3 className="font-extrabold text-lg text-slate-900">Belum Ada Jadwal pada Filter Ini</h3>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
-              Anda belum memasukkan jadwal pelajaran atau tidak ada jadwal yang sesuai dengan filter yang dipilih.
+              {teacherWeekCounts.total > 0
+                ? `Anda memiliki ${teacherWeekCounts.total} jam jadwal tersimpan di rotasi pekan lain atau tab status lainnya.`
+                : 'Anda belum memasukkan jadwal pelajaran atau tidak ada jadwal yang sesuai dengan filter yang dipilih.'}
             </p>
           </div>
-          <button
-            onClick={() => {
-              setEditingSchedule(null);
-              setIsModalOpen(true);
-            }}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#0B1E2E] hover:bg-slate-800 text-amber-300 font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Input Jadwal Mengajar Anda Sekarang</span>
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
+            {teacherWeekCounts.total > 0 && selectedWeek !== 'ALL' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedWeek('ALL');
+                  setSelectedStatusTab('ALL');
+                }}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-cyan-700 hover:bg-cyan-800 text-white font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
+              >
+                <Layers className="w-4 h-4" />
+                <span>Tampilkan Semua {teacherWeekCounts.total} Jadwal Saya</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setEditingSchedule(null);
+                setIsModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#0B1E2E] hover:bg-slate-800 text-amber-300 font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Input Jadwal Mengajar Sekarang</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -616,7 +704,9 @@ export const PembelajaranSayaView: React.FC = () => {
         rooms={rooms}
         editingSchedule={editingSchedule}
         defaultWeekType={
-          effectiveWeekType === 'P10_NORM_P11_PROD' || effectiveWeekType === 'P10_PROD_P11_NORM'
+          selectedWeek === 'P10_NORM_P11_PROD' || selectedWeek === 'P10_PROD_P11_NORM'
+            ? selectedWeek
+            : effectiveWeekType === 'P10_NORM_P11_PROD' || effectiveWeekType === 'P10_PROD_P11_NORM'
             ? effectiveWeekType
             : realtimeWeekType
         }

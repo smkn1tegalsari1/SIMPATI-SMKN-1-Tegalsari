@@ -156,7 +156,7 @@ export function computeEmptyScheduleAudit(params: {
     classes.length > 0
       ? classes.map((c) => {
           const gradeNum: 10 | 11 | 12 =
-            c.grade === 11 ? 11 : c.grade === 12 ? 12 : 10;
+            Number(c.grade) === 11 ? 11 : Number(c.grade) === 12 ? 12 : 10;
           const progCode = resolveDepartmentCode(
             c.department,
             c.name,
