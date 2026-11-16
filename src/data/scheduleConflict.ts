@@ -41,6 +41,9 @@ export interface ScheduleConflictAnalysis {
   hasOwnOtherClassConflict: boolean;
   hasRoomConflict: boolean;
   ownSameClassScheduleIds: string[];
+  ownSameSubjectClassOverlapIds: string[];
+  hasOwnSameSubjectClassOnly: boolean;
+  sameTeacherSubjectClassElsewhere: ScheduleItem[];
   otherWeekAvailability: AlternateWeekAvailability | null;
   classPeriodMap: ClassPeriodSlotInfo[];
   weekFillCounts: {
@@ -109,6 +112,24 @@ export function isSameClassSchedule(
   return Boolean(targetNorm && itemNorm && targetNorm === itemNorm);
 }
 
+export function isSameSubjectSchedule(
+  item: Pick<ScheduleItem, 'subjectCode' | 'subjectName'>,
+  targetSubjectCode?: string,
+  targetSubjectName?: string
+): boolean {
+  const sName = (item.subjectName || '').trim().toLowerCase();
+  const tName = (targetSubjectName || '').trim().toLowerCase();
+  if (sName && tName && sName === tName) {
+    return true;
+  }
+  const sCode = (item.subjectCode || '').trim().toUpperCase();
+  const tCode = (targetSubjectCode || '').trim().toUpperCase();
+  if (sCode && tCode && sCode !== 'MAPEL' && tCode !== 'MAPEL' && sCode === tCode) {
+    return true;
+  }
+  return false;
+}
+
 export function isSameRoomSchedule(
   item: Pick<ScheduleItem, 'roomName'>,
   targetRoomName: string
@@ -137,6 +158,8 @@ export function analyzeScheduleConflicts(params: {
   className: string;
   targetRoomName: string;
   teacher: Pick<Teacher, 'id' | 'code' | 'name'>;
+  subjectCode?: string;
+  subjectName?: string;
 }): ScheduleConflictAnalysis {
   const {
     allSchedules,
@@ -148,11 +171,15 @@ export function analyzeScheduleConflicts(params: {
     className,
     targetRoomName,
     teacher,
+    subjectCode,
+    subjectName,
   } = params;
 
   const dayUpper = (dayName || 'SENIN').trim().toUpperCase();
   const conflicts: ScheduleConflictEntry[] = [];
   const ownSameClassIdSet = new Set<string>();
+  const ownSameSubjectClassIdSet = new Set<string>();
+  let allOwnSameClassMatchSubject = true;
 
   for (const periodNum of targetPeriods) {
     for (const s of allSchedules) {
@@ -169,11 +196,23 @@ export function analyzeScheduleConflicts(params: {
       if (sameClass) {
         if (ownTeacher) {
           if (s.id) ownSameClassIdSet.add(s.id);
+          const sameSubject =
+            Boolean(subjectCode || subjectName) &&
+            isSameSubjectSchedule(s, subjectCode, subjectName);
+          if (sameSubject) {
+            if (s.id) ownSameSubjectClassIdSet.add(s.id);
+          } else {
+            allOwnSameClassMatchSubject = false;
+          }
           conflicts.push({
             period: periodNum,
             type: 'own_same_class',
-            title: `Jam Ke-${periodNum} · Sudah Terjadwal oleh Anda (${s.className})`,
-            message: `Anda sendiri sudah menjadwalkan "${s.subjectName}" di kelas ${s.className} (Ruang ${s.roomName || '-'}) pada ${weekLabel}.`,
+            title: sameSubject
+              ? `Jam Ke-${periodNum} · Jadwal Sama (${s.className} - ${s.subjectName})`
+              : `Jam Ke-${periodNum} · Sudah Terjadwal oleh Anda (${s.className})`,
+            message: sameSubject
+              ? `Jadwal Anda untuk "${s.subjectName}" di kelas ${s.className} (Ruang ${s.roomName || '-'}) pada ${weekLabel} akan diperbarui dengan data baru.`
+              : `Anda sendiri sudah menjadwalkan "${s.subjectName}" di kelas ${s.className} (Ruang ${s.roomName || '-'}) pada ${weekLabel}.`,
             conflictingItem: s,
             weekLabel,
           });
@@ -214,6 +253,21 @@ export function analyzeScheduleConflicts(params: {
       }
     }
   }
+
+  // Jadwal lama dengan Guru, Mapel, dan Kelas yang sama pada jam/hari lain di rotasi pekan ini
+  const sameTeacherSubjectClassElsewhere: ScheduleItem[] =
+    (subjectCode || subjectName) && (classId || className)
+      ? allSchedules.filter((s) => {
+          if (editingSchedule && s.id === editingSchedule.id) return false;
+          if (s.id && ownSameClassIdSet.has(s.id)) return false;
+          if (!doScheduleWeeksOverlap(weekType, s.weekType)) return false;
+          return (
+            isSameTeacherSchedule(s, teacher) &&
+            isSameClassSchedule(s, classId, className) &&
+            isSameSubjectSchedule(s, subjectCode, subjectName)
+          );
+        })
+      : [];
 
   // Hitung peta jam 1..11 untuk kelas & hari & pekan yang sedang dipilih
   const classPeriodMap: ClassPeriodSlotInfo[] = [];
@@ -319,13 +373,21 @@ export function analyzeScheduleConflicts(params: {
     };
   }
 
+  const hasOwnSameClassConflict = conflicts.some((c) => c.type === 'own_same_class');
+
   return {
     conflicts,
     hasOtherTeacherClassConflict: conflicts.some((c) => c.type === 'other_teacher_class'),
-    hasOwnSameClassConflict: conflicts.some((c) => c.type === 'own_same_class'),
+    hasOwnSameClassConflict,
     hasOwnOtherClassConflict: conflicts.some((c) => c.type === 'own_other_class'),
     hasRoomConflict: conflicts.some((c) => c.type === 'room_conflict'),
     ownSameClassScheduleIds: Array.from(ownSameClassIdSet),
+    ownSameSubjectClassOverlapIds: Array.from(ownSameSubjectClassIdSet),
+    hasOwnSameSubjectClassOnly:
+      hasOwnSameClassConflict &&
+      ownSameClassIdSet.size > 0 &&
+      allOwnSameClassMatchSubject,
+    sameTeacherSubjectClassElsewhere,
     otherWeekAvailability,
     classPeriodMap,
     weekFillCounts: {

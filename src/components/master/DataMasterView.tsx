@@ -37,6 +37,13 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import {
+  doScheduleWeeksOverlap,
+  isSameClassSchedule,
+  isSameSubjectSchedule,
+  isSameTeacherSchedule,
+  normalizeScheduleDayName,
+} from '../../data/scheduleConflict';
+import {
   Teacher,
   Subject,
   SchoolClass,
@@ -117,6 +124,7 @@ export const DataMasterView: React.FC = () => {
     addSchedule,
     updateSchedule,
     deleteSchedule,
+    saveSchedulesBatch,
     bulkDeleteSchedules,
     bulkUpdateSchedules,
     clearAllSchedules,
@@ -539,6 +547,7 @@ export const DataMasterView: React.FC = () => {
   const [schTeacherId, setSchTeacherId] = useState(teachers[0]?.id || '');
   const [schRoomId, setSchRoomId] = useState(rooms[0]?.id || '');
   const [schWeekType, setSchWeekType] = useState<ScheduleWeekType>('P10_PROD_P11_NORM');
+  const [schReplaceElsewhere, setSchReplaceElsewhere] = useState(false);
 
   // Pastikan default dropdown selalu sinkron saat data master baru ditambahkan/diubah
   useEffect(() => {
@@ -578,8 +587,13 @@ export const DataMasterView: React.FC = () => {
           ? effectiveWeekType
           : realtimeWeekType;
       setSchWeekType(targetWeek);
+      setSchReplaceElsewhere(false);
     }
   }, [isAddScheduleOpen, effectiveWeekType, realtimeWeekType]);
+
+  useEffect(() => {
+    setSchReplaceElsewhere(false);
+  }, [schDayName, schPeriod, schClassId, schSubjectId, schTeacherId, schWeekType]);
 
   // Handlers for Manual Add
   const handleSaveTeacher = (e: React.FormEvent) => {
@@ -755,8 +769,47 @@ export const DataMasterView: React.FC = () => {
     setEditingAcademicYear(null);
   };
 
+  // Deteksi jadwal yang cocok (Guru, Mapel & Kelas sama) untuk keperluan timpa otomatis/opsional
+  const addScheduleMatchInfo = (() => {
+    if (!isAddScheduleOpen) {
+      return { sameSlotMatches: [] as ScheduleItem[], elsewhereSameTrio: [] as ScheduleItem[] };
+    }
+    const selClass = classes.find((c) => c.id === schClassId) || classes[0];
+    const selSub = subjects.find((s) => s.id === schSubjectId) || subjects[0];
+    const selTeacher = teachers.find((t) => t.id === schTeacherId) || teachers[0];
+    if (!selClass || !selSub || !selTeacher) {
+      return { sameSlotMatches: [] as ScheduleItem[], elsewhereSameTrio: [] as ScheduleItem[] };
+    }
+
+    const dayUpper = String(schDayName || 'SENIN').trim().toUpperCase();
+    const targetPeriodStr = String(schPeriod).trim().toUpperCase();
+
+    const sameSlotMatches = schedules.filter((s) => {
+      if (normalizeScheduleDayName(s) !== dayUpper) return false;
+      if (String(s.periodIndex).trim().toUpperCase() !== targetPeriodStr) return false;
+      if (!doScheduleWeeksOverlap(schWeekType, s.weekType)) return false;
+      return (
+        isSameClassSchedule(s, selClass.id, selClass.name) &&
+        isSameTeacherSchedule(s, selTeacher)
+      );
+    });
+
+    const sameSlotIds = new Set(sameSlotMatches.map((s) => s.id));
+    const elsewhereSameTrio = schedules.filter((s) => {
+      if (sameSlotIds.has(s.id)) return false;
+      if (!doScheduleWeeksOverlap(schWeekType, s.weekType)) return false;
+      return (
+        isSameTeacherSchedule(s, selTeacher) &&
+        isSameClassSchedule(s, selClass.id, selClass.name) &&
+        isSameSubjectSchedule(s, selSub.code, selSub.name)
+      );
+    });
+
+    return { sameSlotMatches, elsewhereSameTrio };
+  })();
+
   // Handlers for Jadwal Pelajaran (Tambah Manual, Edit, & Impor)
-  const handleSaveSchedule = (e: React.FormEvent) => {
+  const handleSaveSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
     const selClass = classes.find((c) => c.id === schClassId) || classes[0];
     const selSub = subjects.find((s) => s.id === schSubjectId) || subjects[0];
@@ -771,8 +824,11 @@ export const DataMasterView: React.FC = () => {
     const startTime = timeParts[0] || '06:45';
     const endTime = timeParts[1] || '07:20';
 
+    const { sameSlotMatches, elsewhereSameTrio } = addScheduleMatchInfo;
+    const reusedId = sameSlotMatches[0]?.id || `sc-man-${Date.now()}`;
+
     const newItem: ScheduleItem = {
-      id: `sc-man-${Date.now()}`,
+      id: reusedId,
       dayOfWeek: dayMap[schDayName] || 1,
       dayName: schDayName,
       periodIndex: schPeriod,
@@ -792,9 +848,25 @@ export const DataMasterView: React.FC = () => {
       weekType: schWeekType,
     };
 
-    addSchedule(newItem);
+    const idsToDelete = new Set<string>();
+    sameSlotMatches.forEach((m) => {
+      if (m.id && m.id !== reusedId) idsToDelete.add(m.id);
+    });
+    if (schReplaceElsewhere) {
+      elsewhereSameTrio.forEach((m) => {
+        if (m.id && m.id !== reusedId) idsToDelete.add(m.id);
+      });
+    }
+
+    const replaceIds = idsToDelete.size > 0 ? Array.from(idsToDelete) : undefined;
+    await saveSchedulesBatch([newItem], replaceIds);
     setIsAddScheduleOpen(false);
-    setToastNotification(`Jadwal "${newItem.subjectName} (${newItem.className})" berhasil disimpan ke database!`);
+    const isOverwrite = sameSlotMatches.length > 0 || (schReplaceElsewhere && elsewhereSameTrio.length > 0);
+    setToastNotification(
+      isOverwrite
+        ? `Jadwal "${newItem.subjectName} (${newItem.className})" berhasil ditimpa dengan data terbaru!`
+        : `Jadwal "${newItem.subjectName} (${newItem.className})" berhasil disimpan ke database!`
+    );
   };
 
   const handleUpdateSchedule = (e: React.FormEvent) => {
@@ -4071,6 +4143,37 @@ export const DataMasterView: React.FC = () => {
                 </select>
               </div>
 
+              {addScheduleMatchInfo.sameSlotMatches.length > 0 && (
+                <div className="p-3 rounded-xl bg-cyan-50 border border-cyan-300 text-cyan-950 text-[11px] font-semibold flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-cyan-700 shrink-0 mt-0.5" />
+                  <span>
+                    Guru &amp; Kelas ini sudah memiliki jadwal pada slot ini ({schDayName} Jam Ke-{schPeriod}). Menyimpan akan otomatis menimpa data lama dengan data yang baru.
+                  </span>
+                </div>
+              )}
+
+              {addScheduleMatchInfo.elsewhereSameTrio.length > 0 && (
+                <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-sky-950 space-y-2 text-[11px]">
+                  <p className="font-semibold leading-snug">
+                    Ditemukan <strong>{addScheduleMatchInfo.elsewhereSameTrio.length} slot jadwal lama</strong> dengan Guru, Mapel &amp; Kelas yang sama di jam/hari lain (
+                    {addScheduleMatchInfo.elsewhereSameTrio
+                      .map((s) => `${s.dayName} J${s.periodIndex}`)
+                      .slice(0, 6)
+                      .join(', ')}
+                    {addScheduleMatchInfo.elsewhereSameTrio.length > 6 ? ', ...' : ''}).
+                  </p>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-sky-900">
+                    <input
+                      type="checkbox"
+                      checked={schReplaceElsewhere}
+                      onChange={(e) => setSchReplaceElsewhere(e.target.checked)}
+                      className="w-4 h-4 rounded text-cyan-700 focus:ring-cyan-500 border-sky-400 cursor-pointer"
+                    />
+                    <span>Timpa juga jadwal lama tersebut dengan data input baru ini</span>
+                  </label>
+                </div>
+              )}
+
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -4084,7 +4187,11 @@ export const DataMasterView: React.FC = () => {
                   className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg flex items-center gap-1.5 shadow-xs"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Simpan Jadwal Pelajaran</span>
+                  <span>
+                    {addScheduleMatchInfo.sameSlotMatches.length > 0 || schReplaceElsewhere
+                      ? 'Timpa & Simpan Jadwal'
+                      : 'Simpan Jadwal Pelajaran'}
+                  </span>
                 </button>
               </div>
             </form>

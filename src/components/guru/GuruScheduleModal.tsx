@@ -55,6 +55,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
   const [customSubjectName, setCustomSubjectName] = useState<string>('');
   const [customRoomName, setCustomRoomName] = useState<string>('');
   const [replaceOwnSameClass, setReplaceOwnSameClass] = useState<boolean>(false);
+  const [replaceSameSubjectElsewhere, setReplaceSameSubjectElsewhere] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string>('');
 
   const wasOpenRef = useRef<boolean>(false);
@@ -79,6 +80,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
     prevEditIdRef.current = currentEditId;
     setSubmitError('');
     setReplaceOwnSameClass(false);
+    setReplaceSameSubjectElsewhere(false);
 
     if (editingSchedule) {
       setDayName(editingSchedule.dayName || 'SENIN');
@@ -149,8 +151,9 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
   // Reset konfirmasi timpa jadwal sendiri setiap kali target slot berubah
   useEffect(() => {
     setReplaceOwnSameClass(false);
+    setReplaceSameSubjectElsewhere(false);
     setSubmitError('');
-  }, [dayName, startPeriod, endPeriod, weekType, classId]);
+  }, [dayName, startPeriod, endPeriod, weekType, classId, subjectId]);
 
   // Jaga agar dropdown tetap valid bila data master baru tiba setelah modal terbuka
   useEffect(() => {
@@ -209,9 +212,13 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
   }, [rooms, roomId]);
 
   const selectedClassName = selectedClassObj?.name || editingSchedule?.className || '';
+  const selectedSubjectName =
+    selectedSubjectObj?.name || customSubjectName.trim() || editingSchedule?.subjectName || '';
+  const selectedSubjectCode =
+    selectedSubjectObj?.code || editingSchedule?.subjectCode || '';
   const targetRoomName = selectedRoomObj ? selectedRoomObj.name : customRoomName.trim();
 
-  // Analisis Bentrok Real-Time terdeduplikasi + peta slot J1-J11 + cek rotasi pekan pasangan
+  // Analisis Bentrok Real-Time terdeduplikasi + cek kecocokan Guru+Mapel+Kelas + cek rotasi pekan pasangan
   const conflictAnalysis = useMemo(() => {
     return analyzeScheduleConflicts({
       allSchedules,
@@ -223,6 +230,8 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       className: selectedClassName,
       targetRoomName,
       teacher,
+      subjectCode: selectedSubjectCode,
+      subjectName: selectedSubjectName,
     });
   }, [
     allSchedules,
@@ -234,6 +243,8 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
     selectedClassName,
     targetRoomName,
     teacher,
+    selectedSubjectCode,
+    selectedSubjectName,
   ]);
 
   const {
@@ -243,12 +254,17 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
     hasOwnOtherClassConflict,
     hasRoomConflict,
     ownSameClassScheduleIds,
+    hasOwnSameSubjectClassOnly,
+    sameTeacherSubjectClassElsewhere,
     otherWeekAvailability,
     weekFillCounts,
   } = conflictAnalysis;
 
+  const canAutoOverwriteSameTeacherSubjectClass = hasOwnSameSubjectClassOnly;
+  const willOverwriteOverlap = canAutoOverwriteSameTeacherSubjectClass || replaceOwnSameClass;
+
   const isBlocked =
-    hasOtherTeacherClassConflict || (hasOwnSameClassConflict && !replaceOwnSameClass);
+    hasOtherTeacherClassConflict || (hasOwnSameClassConflict && !willOverwriteOverlap);
 
   // Submit Handler: Menghasilkan array jadwal untuk startPeriod s/d endPeriod
   const handleSubmit = async (e: React.FormEvent) => {
@@ -259,7 +275,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       );
       return;
     }
-    if (hasOwnSameClassConflict && !replaceOwnSameClass) {
+    if (hasOwnSameClassConflict && !willOverwriteOverlap) {
       setSubmitError(
         'Centang opsi perbarui jadwal Anda sendiri atau pindah ke rotasi pekan yang kosong terlebih dahulu.'
       );
@@ -290,7 +306,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
     );
 
     const isSingleOwnReplace =
-      ownSameClassScheduleIds.length === 1 && targetPeriods.length === 1;
+      willOverwriteOverlap && ownSameClassScheduleIds.length === 1 && targetPeriods.length === 1;
 
     const schedulesToSave: ScheduleItem[] = targetPeriods.map((pNum, index) => {
       const periodObj = PERIOD_TIMES.find((p) => p.period === pNum) || {
@@ -301,7 +317,7 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       };
 
       const matchingOwnForPeriod =
-        replaceOwnSameClass && !editingSchedule
+        willOverwriteOverlap && !editingSchedule
           ? conflicts.find(
               (c) => c.type === 'own_same_class' && c.period === pNum
             )?.conflictingItem
@@ -338,16 +354,19 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
       };
     });
 
-    const replaceIds = replaceOwnSameClass
-      ? Array.from(
-          new Set([
-            ...(editingSchedule?.id ? [editingSchedule.id] : []),
-            ...ownSameClassScheduleIds,
-          ])
-        )
-      : editingSchedule?.id
-      ? [editingSchedule.id]
-      : undefined;
+    const idsToDelete = new Set<string>();
+    if (editingSchedule?.id) idsToDelete.add(editingSchedule.id);
+    if (willOverwriteOverlap) {
+      ownSameClassScheduleIds.forEach((id) => idsToDelete.add(id));
+    }
+    if (replaceSameSubjectElsewhere) {
+      sameTeacherSubjectClassElsewhere.forEach((s) => {
+        if (s.id) idsToDelete.add(s.id);
+      });
+    }
+    const upsertedIdSet = new Set(schedulesToSave.map((s) => s.id));
+    const filteredReplaceIds = Array.from(idsToDelete).filter((id) => !upsertedIdSet.has(id));
+    const replaceIds = filteredReplaceIds.length > 0 ? filteredReplaceIds : undefined;
 
     await onSaveBatch(schedulesToSave, replaceIds);
     onClose();
@@ -385,29 +404,41 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Status Bentrok / Slot Sendiri Alert Box */}
+          {/* Status Bentrok / Slot Sendiri / Auto-Timpa Alert Box */}
           {conflicts.length > 0 && (
             <div
               className={`p-4 rounded-2xl border-2 space-y-2.5 animate-in fade-in ${
                 hasOtherTeacherClassConflict
                   ? 'bg-rose-50 border-rose-300 text-rose-900'
+                  : canAutoOverwriteSameTeacherSubjectClass && !hasOwnOtherClassConflict && !hasRoomConflict
+                  ? 'bg-cyan-50 border-cyan-300 text-cyan-950'
                   : 'bg-amber-50 border-amber-300 text-amber-950'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <div
                   className={`flex items-center gap-2 font-black text-sm ${
-                    hasOtherTeacherClassConflict ? 'text-rose-800' : 'text-amber-900'
+                    hasOtherTeacherClassConflict
+                      ? 'text-rose-800'
+                      : canAutoOverwriteSameTeacherSubjectClass && !hasOwnOtherClassConflict && !hasRoomConflict
+                      ? 'text-cyan-900'
+                      : 'text-amber-900'
                   }`}
                 >
-                  <AlertTriangle
-                    className={`w-5 h-5 shrink-0 ${
-                      hasOtherTeacherClassConflict ? 'text-rose-600' : 'text-amber-600'
-                    }`}
-                  />
+                  {canAutoOverwriteSameTeacherSubjectClass && !hasOtherTeacherClassConflict ? (
+                    <RefreshCw className="w-5 h-5 shrink-0 text-cyan-700" />
+                  ) : (
+                    <AlertTriangle
+                      className={`w-5 h-5 shrink-0 ${
+                        hasOtherTeacherClassConflict ? 'text-rose-600' : 'text-amber-600'
+                      }`}
+                    />
+                  )}
                   <span>
                     {hasOtherTeacherClassConflict
                       ? `Terdeteksi ${conflicts.length} Bentrok Jadwal di Rotasi ${getWeekTypeShortLabel(weekType)}`
+                      : canAutoOverwriteSameTeacherSubjectClass
+                      ? `Jadwal Sama (Guru, Mapel & Kelas Sama) Siap Ditimpa (${getWeekTypeShortLabel(weekType)})`
                       : hasOwnSameClassConflict
                       ? `Slot Jam Sudah Terisi oleh Jadwal Anda Sendiri (${getWeekTypeShortLabel(weekType)})`
                       : `Peringatan ${conflicts.length} Ketersediaan Ruang / Jam Anda`}
@@ -417,6 +448,8 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
                   className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 ${
                     hasOtherTeacherClassConflict
                       ? 'bg-rose-100 text-rose-800 border-rose-200'
+                      : canAutoOverwriteSameTeacherSubjectClass && !hasOwnOtherClassConflict && !hasRoomConflict
+                      ? 'bg-cyan-100 text-cyan-900 border-cyan-300'
                       : 'bg-amber-100 text-amber-900 border-amber-300'
                   }`}
                 >
@@ -427,17 +460,26 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
               <ul className="space-y-1.5 text-xs max-h-40 overflow-y-auto pr-1">
                 {conflicts.map((c, i) => {
                   const isHardBlock = c.type === 'other_teacher_class';
+                  const isAutoSame = c.type === 'own_same_class' && canAutoOverwriteSameTeacherSubjectClass;
                   return (
                     <li
                       key={`${c.type}-${c.period}-${i}`}
                       className={`flex items-start justify-between gap-2 bg-white/90 p-2.5 rounded-xl border shadow-2xs ${
-                        isHardBlock ? 'border-rose-200' : 'border-amber-200'
+                        isHardBlock
+                          ? 'border-rose-200'
+                          : isAutoSame
+                          ? 'border-cyan-200'
+                          : 'border-amber-200'
                       }`}
                     >
                       <div className="flex items-start gap-2 min-w-0">
                         <span
                           className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
-                            isHardBlock ? 'bg-rose-600' : 'bg-amber-500'
+                            isHardBlock
+                              ? 'bg-rose-600'
+                              : isAutoSame
+                              ? 'bg-cyan-600'
+                              : 'bg-amber-500'
                           }`}
                         />
                         <div className="min-w-0">
@@ -453,25 +495,36 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
                 })}
               </ul>
 
-              {/* Jika bentrok dengan jadwal milik guru sendiri pada kelas yang sama */}
+              {/* Jika bentrok dengan jadwal milik guru sendiri (Guru, Mapel, & Kelas sama -> langsung boleh timpa; beda mapel -> centang konfirmasi) */}
               {!hasOtherTeacherClassConflict && hasOwnSameClassConflict && (
-                <div className="pt-2 border-t border-amber-200/80 space-y-2">
-                  <p className="text-[11px] font-semibold text-amber-900 leading-relaxed">
-                    Kelas <strong>{selectedClassName}</strong> terlihat kosong jika Anda memantau rotasi pekan lainnya, tetapi pada rotasi{' '}
-                    <strong>{getWeekTypeShortLabel(weekType)}</strong> jam ini sudah Anda isi sendiri.
-                  </p>
-                  <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-amber-300 cursor-pointer hover:bg-amber-50/70 transition">
-                    <input
-                      type="checkbox"
-                      checked={replaceOwnSameClass}
-                      onChange={(e) => setReplaceOwnSameClass(e.target.checked)}
-                      className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-amber-400 cursor-pointer"
-                    />
-                    <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                      <RefreshCw className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>Timpa / perbarui jadwal saya yang sudah ada di slot jam ini</span>
-                    </span>
-                  </label>
+                <div className="pt-2 border-t border-cyan-200/80 space-y-2">
+                  {canAutoOverwriteSameTeacherSubjectClass ? (
+                    <p className="text-[11px] font-semibold text-cyan-900 leading-relaxed flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-cyan-700 shrink-0" />
+                      <span>
+                        Nama guru, mata pelajaran, dan kelas sama dengan jadwal sebelumnya pada slot ini. Klik tombol simpan untuk langsung menimpa dengan data terbaru.
+                      </span>
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-[11px] font-semibold text-amber-900 leading-relaxed">
+                        Kelas <strong>{selectedClassName}</strong> terlihat kosong jika Anda memantau rotasi pekan lainnya, tetapi pada rotasi{' '}
+                        <strong>{getWeekTypeShortLabel(weekType)}</strong> jam ini sudah Anda isi dengan mapel lain.
+                      </p>
+                      <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-amber-300 cursor-pointer hover:bg-amber-50/70 transition">
+                        <input
+                          type="checkbox"
+                          checked={replaceOwnSameClass}
+                          onChange={(e) => setReplaceOwnSameClass(e.target.checked)}
+                          className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-amber-400 cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                          <RefreshCw className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>Timpa / perbarui jadwal saya yang sudah ada di slot jam ini</span>
+                        </span>
+                      </label>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -512,6 +565,38 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Opsi Timpa jadwal lama dengan Guru, Mapel & Kelas sama di jam/hari lain */}
+          {sameTeacherSubjectClassElsewhere.length > 0 && (
+            <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-sky-950 space-y-2">
+              <p className="text-[11px] font-semibold leading-relaxed">
+                Ditemukan <strong>{sameTeacherSubjectClassElsewhere.length} slot jadwal lama</strong> dengan Guru, Mapel (
+                <strong>{selectedSubjectName}</strong>), dan Kelas (<strong>{selectedClassName}</strong>) yang sama di jam/hari lain (
+                {Array.from(
+                  new Set(
+                    sameTeacherSubjectClassElsewhere.map(
+                      (s) => `${s.dayName || 'HARI'} J${s.periodIndex}`
+                    )
+                  )
+                )
+                  .slice(0, 6)
+                  .join(', ')}
+                {sameTeacherSubjectClassElsewhere.length > 6 ? ', ...' : ''}).
+              </p>
+              <label className="flex items-center gap-2.5 p-2 rounded-xl bg-white border border-sky-300 cursor-pointer hover:bg-sky-50/70 transition">
+                <input
+                  type="checkbox"
+                  checked={replaceSameSubjectElsewhere}
+                  onChange={(e) => setReplaceSameSubjectElsewhere(e.target.checked)}
+                  className="w-4 h-4 rounded text-cyan-700 focus:ring-cyan-500 border-sky-400 cursor-pointer"
+                />
+                <span className="text-xs font-bold text-sky-950 flex items-center gap-1.5">
+                  <RefreshCw className="w-3.5 h-3.5 text-cyan-700 shrink-0" />
+                  <span>Timpa &amp; ganti jadwal lama tersebut dengan data input baru ini</span>
+                </span>
+              </label>
             </div>
           )}
 
@@ -881,8 +966,8 @@ export const GuruScheduleModal: React.FC<GuruScheduleModalProps> = ({
               <span>
                 {editingSchedule && totalJP === 1
                   ? 'Simpan Perubahan Jadwal'
-                  : replaceOwnSameClass && hasOwnSameClassConflict
-                  ? `Perbarui ${totalJP} Jam di Jadwal Saya`
+                  : (willOverwriteOverlap && hasOwnSameClassConflict) || replaceSameSubjectElsewhere
+                  ? `Timpa & Simpan ${totalJP} Jam Jadwal`
                   : `Tambahkan ${totalJP} Jam ke Jadwal Saya`}
               </span>
             </button>
