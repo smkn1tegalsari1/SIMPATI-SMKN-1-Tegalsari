@@ -393,4 +393,257 @@ export function mergeAttendanceWithDelta(
   return result;
 }
 
+export interface EntityDelta<T = any> {
+  upserts: T[];
+  deleteIds: string[];
+  replaceAll?: T[];
+}
+
+export function createEmptyEntityDelta<T = any>(): EntityDelta<T> {
+  return {
+    upserts: [],
+    deleteIds: [],
+  };
+}
+
+export function hasEntityDeltaChanges<T = any>(delta?: EntityDelta<T> | null): boolean {
+  if (!delta) return false;
+  if (delta.replaceAll !== undefined) return true;
+  if (delta.upserts.length > 0) return true;
+  if (delta.deleteIds.length > 0) return true;
+  return false;
+}
+
+export function recordEntityDeltaPatch<T extends { id?: string }>(
+  current: EntityDelta<T>,
+  patch: Partial<EntityDelta<T>>
+): EntityDelta<T> {
+  if (patch.replaceAll !== undefined) {
+    return {
+      upserts: [],
+      deleteIds: [],
+      replaceAll: [...patch.replaceAll],
+    };
+  }
+
+  let deleteIds = [...current.deleteIds];
+  let upserts = [...current.upserts];
+
+  if (patch.deleteIds && patch.deleteIds.length > 0) {
+    const delSet = new Set([...deleteIds, ...patch.deleteIds]);
+    deleteIds = Array.from(delSet);
+    upserts = upserts.filter((u) => !u?.id || !delSet.has(u.id));
+  }
+
+  if (patch.upserts && patch.upserts.length > 0) {
+    const upsertIds = new Set(patch.upserts.map((u) => u?.id).filter(Boolean) as string[]);
+    deleteIds = deleteIds.filter((id) => !upsertIds.has(id));
+    const map = new Map<string, T>();
+    upserts.forEach((u) => {
+      if (u?.id) map.set(u.id, u);
+    });
+    patch.upserts.forEach((u) => {
+      if (u?.id) map.set(u.id, u);
+    });
+    upserts = Array.from(map.values());
+  }
+
+  return {
+    upserts,
+    deleteIds,
+    ...(current.replaceAll !== undefined ? { replaceAll: current.replaceAll } : {}),
+  };
+}
+
+export function combineEntityDeltas<T extends { id?: string }>(
+  older: EntityDelta<T> | null | undefined,
+  newer: EntityDelta<T>
+): EntityDelta<T> {
+  if (!older || !hasEntityDeltaChanges(older)) {
+    return newer;
+  }
+  if (!hasEntityDeltaChanges(newer)) {
+    return older;
+  }
+  if (newer.replaceAll !== undefined) {
+    return { ...newer };
+  }
+  if (older.replaceAll !== undefined) {
+    return {
+      upserts: [],
+      deleteIds: [],
+      replaceAll: mergeEntitiesWithDelta(older.replaceAll, newer),
+    };
+  }
+  return recordEntityDeltaPatch(older, newer);
+}
+
+/**
+ * Menggabungkan perubahan data master (guru, akun, mapel, kelas, ruang, jurusan, tahun pelajaran)
+ * secara atomik di atas daftar terbaru dari Cloud Firestore berdasarkan id.
+ */
+export function mergeEntitiesWithDelta<T extends { id?: string }>(
+  remoteList: T[] | undefined | null,
+  delta: EntityDelta<T>
+): T[] {
+  if (delta.replaceAll !== undefined) {
+    return [...delta.replaceAll];
+  }
+
+  let result = Array.isArray(remoteList) ? [...remoteList] : [];
+
+  if (delta.deleteIds.length > 0) {
+    const deleteSet = new Set(delta.deleteIds);
+    result = result.filter((item) => !item?.id || !deleteSet.has(item.id));
+  }
+
+  if (delta.upserts.length > 0) {
+    const upsertMap = new Map<string, T>();
+    for (const item of delta.upserts) {
+      if (item && item.id) {
+        upsertMap.set(item.id, item);
+      }
+    }
+    const seen = new Set<string>();
+    result = result.map((existing) => {
+      if (existing?.id && upsertMap.has(existing.id)) {
+        seen.add(existing.id);
+        return upsertMap.get(existing.id)!;
+      }
+      return existing;
+    });
+    for (const item of delta.upserts) {
+      if (item?.id && !seen.has(item.id)) {
+        seen.add(item.id);
+        result.push(item);
+      }
+    }
+  }
+
+  // Deduplikasi akhir berdasarkan id (pertahankan entri terbaru)
+  const dedupedReversed: T[] = [];
+  const seenFinal = new Set<string>();
+  for (let i = result.length - 1; i >= 0; i--) {
+    const item = result[i];
+    if (!item) continue;
+    if (item.id) {
+      if (seenFinal.has(item.id)) continue;
+      seenFinal.add(item.id);
+    }
+    dedupedReversed.push(item);
+  }
+  return dedupedReversed.reverse();
+}
+
+export function combineScheduleDeltas(
+  older: ScheduleDelta | null | undefined,
+  newer: ScheduleDelta
+): ScheduleDelta {
+  if (!older || !hasScheduleDeltaChanges(older)) return newer;
+  if (!hasScheduleDeltaChanges(newer)) return older;
+  if (newer.replaceAll !== undefined) return { ...newer };
+  if (older.replaceAll !== undefined) {
+    return {
+      upserts: [],
+      deleteIds: [],
+      replaceAll: mergeSchedulesWithDelta(older.replaceAll, newer),
+    };
+  }
+  const merged: ScheduleDelta = {
+    upserts: [...older.upserts],
+    deleteIds: [...older.deleteIds],
+    ...(newer.replaceClassScope !== undefined
+      ? { replaceClassScope: newer.replaceClassScope }
+      : older.replaceClassScope !== undefined
+      ? { replaceClassScope: older.replaceClassScope }
+      : {}),
+  };
+  if (newer.deleteIds.length > 0) {
+    const delSet = new Set([...merged.deleteIds, ...newer.deleteIds]);
+    merged.deleteIds = Array.from(delSet);
+    merged.upserts = merged.upserts.filter((u) => !u?.id || !delSet.has(u.id));
+  }
+  if (newer.upserts.length > 0) {
+    const upsertIds = new Set(newer.upserts.map((u) => u?.id).filter(Boolean));
+    merged.deleteIds = merged.deleteIds.filter((id) => !upsertIds.has(id));
+    const map = new Map<string, any>();
+    merged.upserts.forEach((u) => {
+      if (u?.id) map.set(u.id, u);
+    });
+    newer.upserts.forEach((u) => {
+      if (u?.id) map.set(u.id, u);
+    });
+    merged.upserts = Array.from(map.values());
+  }
+  return merged;
+}
+
+export function combineJournalDeltas(
+  older: JournalDelta | null | undefined,
+  newer: JournalDelta
+): JournalDelta {
+  if (!older || !hasJournalDeltaChanges(older)) return newer;
+  if (!hasJournalDeltaChanges(newer)) return older;
+  if (newer.replaceAll !== undefined) return { ...newer };
+  if (older.replaceAll !== undefined) {
+    return {
+      upserts: [],
+      deleteIds: [],
+      replaceAll: mergeJournalsWithDelta(older.replaceAll, newer),
+    };
+  }
+  let deleteIds = [...older.deleteIds];
+  let upserts = [...older.upserts];
+  if (newer.deleteIds.length > 0) {
+    const delSet = new Set([...deleteIds, ...newer.deleteIds]);
+    deleteIds = Array.from(delSet);
+    upserts = upserts.filter((u) => !u?.id || !delSet.has(u.id));
+  }
+  if (newer.upserts.length > 0) {
+    const upsertIds = new Set(newer.upserts.map((u) => u?.id).filter(Boolean));
+    deleteIds = deleteIds.filter((id) => !upsertIds.has(id));
+    const map = new Map<string, any>();
+    upserts.forEach((u) => {
+      if (u?.id) map.set(u.id, u);
+    });
+    newer.upserts.forEach((u) => {
+      if (u?.id) map.set(u.id, u);
+    });
+    upserts = Array.from(map.values());
+  }
+  return { upserts, deleteIds };
+}
+
+export function combineAttendanceDeltas(
+  older: AttendanceDelta | null | undefined,
+  newer: AttendanceDelta
+): AttendanceDelta {
+  if (!older || !hasAttendanceDeltaChanges(older)) return newer;
+  if (!hasAttendanceDeltaChanges(newer)) return older;
+  if (newer.replaceAll !== undefined) return { ...newer };
+  if (older.replaceAll !== undefined) {
+    return {
+      upserts: {},
+      deleteKeys: [],
+      replaceAll: mergeAttendanceWithDelta(older.replaceAll, newer),
+    };
+  }
+  let deleteKeys = [...older.deleteKeys];
+  const upserts: Record<string, any> = { ...older.upserts };
+  if (newer.deleteKeys.length > 0) {
+    const delSet = new Set([...deleteKeys, ...newer.deleteKeys]);
+    deleteKeys = Array.from(delSet);
+    for (const k of delSet) {
+      delete upserts[k];
+    }
+  }
+  if (Object.keys(newer.upserts).length > 0) {
+    const keys = new Set(Object.keys(newer.upserts));
+    deleteKeys = deleteKeys.filter((k) => !keys.has(k));
+    Object.assign(upserts, newer.upserts);
+  }
+  return { upserts, deleteKeys };
+}
+
+
 

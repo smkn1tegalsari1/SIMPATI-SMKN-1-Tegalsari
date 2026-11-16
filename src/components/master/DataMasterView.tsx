@@ -487,6 +487,7 @@ export const DataMasterView: React.FC = () => {
 
   // Manual Add Modal States
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
+  const [isSavingTeacher, setIsSavingTeacher] = useState(false);
   const [tCode, setTCode] = useState('');
   const [tName, setTName] = useState('');
   const [tTitle, setTTitle] = useState('');
@@ -596,34 +597,79 @@ export const DataMasterView: React.FC = () => {
   }, [schDayName, schPeriod, schClassId, schSubjectId, schTeacherId, schWeekType]);
 
   // Handlers for Manual Add
-  const handleSaveTeacher = (e: React.FormEvent) => {
+  const handleSaveTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tName) return;
-    const selectedMapel = tTitle || subjects[0]?.name || 'Belum Ditentukan';
-    const newT: Teacher = {
-      id: `t-${Date.now()}`,
-      code: tCode || `G${teachers.length + 1}`,
-      nip: '-',
-      name: tName,
-      title: selectedMapel, // Nama Mapel yang sinkron dengan menu data mapel
-      email: `${tName.toLowerCase().replace(/[^a-z]/g, '')}@smkn1tegalsari.sch.id`,
-      phone: '081234567890',
-      isPiketToday: false,
-    };
-    addTeacher(newT);
-    setTCode('');
-    setTName('');
-    setTTitle('');
-    setIsAddTeacherOpen(false);
-    setToastNotification(`Data Guru "${newT.name}" berhasil disimpan ke database!`);
+    if (isSavingTeacher) return;
+    const trimmedName = tName.trim();
+    const trimmedCode = tCode.trim();
+    if (!trimmedName) return;
+
+    setIsSavingTeacher(true);
+    try {
+      const selectedMapel = tTitle || subjects[0]?.name || 'Belum Ditentukan';
+      const newT: Teacher = {
+        id: `t-${Date.now()}`,
+        code: trimmedCode || `G${teachers.length + 1}`,
+        nip: '-',
+        name: trimmedName,
+        title: selectedMapel, // Nama Mapel yang sinkron dengan menu data mapel
+        email: `${trimmedName.toLowerCase().replace(/[^a-z]/g, '') || 'guru'}@smkn1tegalsari.sch.id`,
+        phone: '081234567890',
+        isPiketToday: false,
+      };
+
+      const res = await addTeacher(newT);
+      setTCode('');
+      setTName('');
+      setTTitle('');
+      setIsAddTeacherOpen(false);
+
+      // Pastikan guru baru langsung terlihat di tabel bila kolom pencarian sedang terisi filter lain
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        const matchesSearch =
+          newT.name.toLowerCase().includes(q) ||
+          newT.code.toLowerCase().includes(q) ||
+          newT.title.toLowerCase().includes(q);
+        if (!matchesSearch) {
+          setSearch('');
+        }
+      }
+
+      if (res.success) {
+        setToastNotification(`Data Guru "${newT.name}" berhasil disimpan permanen ke database Cloud!`);
+      } else {
+        setToastNotification(
+          `Data Guru "${newT.name}" ditambahkan secara lokal, namun sinkron Cloud tertunda: ${res.error || 'Periksa koneksi internet'}`
+        );
+      }
+    } finally {
+      setIsSavingTeacher(false);
+    }
   };
 
-  const handleUpdateTeacher = (e: React.FormEvent) => {
+  const handleUpdateTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingTeacher) return;
-    updateTeacher(editingTeacher);
-    setToastNotification(`Perubahan Data Guru "${editingTeacher.name}" berhasil disimpan ke database!`);
-    setEditingTeacher(null);
+    if (!editingTeacher || isSavingTeacher) return;
+    setIsSavingTeacher(true);
+    try {
+      const cleanedTeacher: Teacher = {
+        ...editingTeacher,
+        code: editingTeacher.code.trim(),
+        name: editingTeacher.name.trim(),
+      };
+      const res = await updateTeacher(cleanedTeacher);
+      setEditingTeacher(null);
+      if (res.success) {
+        setToastNotification(`Perubahan Data Guru "${cleanedTeacher.name}" berhasil disimpan permanen ke database Cloud!`);
+      } else {
+        setToastNotification(
+          `Perubahan Data Guru "${cleanedTeacher.name}" tersimpan lokal, namun sinkron Cloud tertunda: ${res.error || 'Periksa koneksi internet'}`
+        );
+      }
+    } finally {
+      setIsSavingTeacher(false);
+    }
   };
 
   const handleSaveSubject = (e: React.FormEvent) => {
@@ -949,19 +995,25 @@ export const DataMasterView: React.FC = () => {
   };
 
   // Bulk Import Handlers
-  const handleImportTeachers = (parsed: Record<string, string>[]) => {
+  const handleImportTeachers = async (parsed: Record<string, string>[]) => {
     const list: Teacher[] = parsed.map((p, i) => ({
       id: `t-imp-${Date.now()}-${i}`,
-      code: p.kode || `G${teachers.length + i + 1}`,
-      nip: p.nip || '-',
-      name: p.nama || `Guru ${i + 1}`,
-      title: p.mapel || p.jabatan || subjects[0]?.name || 'BAHASA INGGRIS',
-      email: `${(p.nama || 'guru').toLowerCase().replace(/[^a-z]/g, '')}@smkn1tegalsari.sch.id`,
+      code: (p.kode || `G${teachers.length + i + 1}`).trim(),
+      nip: (p.nip || '-').trim(),
+      name: (p.nama || `Guru ${i + 1}`).trim(),
+      title: (p.mapel || p.jabatan || subjects[0]?.name || 'BAHASA INGGRIS').trim(),
+      email: `${(p.nama || 'guru').toLowerCase().replace(/[^a-z]/g, '') || 'guru'}@smkn1tegalsari.sch.id`,
       phone: '081234567890',
       isPiketToday: false,
     }));
-    importTeachers(list);
-    setToastNotification(`Berhasil mengimpor ${list.length} data Guru!`);
+    const res = await importTeachers(list);
+    if (res.success) {
+      setToastNotification(`Berhasil mengimpor & menyimpan ${list.length} data Guru ke database Cloud!`);
+    } else {
+      setToastNotification(
+        `${list.length} data Guru diimpor secara lokal, namun sinkron Cloud tertunda: ${res.error || 'Periksa koneksi internet'}`
+      );
+    }
   };
 
   // Export Data Guru (Excel / CSV) sinkron dengan template
@@ -3061,16 +3113,18 @@ export const DataMasterView: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
+                  disabled={isSavingTeacher}
                   onClick={() => setIsAddTeacherOpen(false)}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-50"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg"
+                  disabled={isSavingTeacher}
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg disabled:opacity-60 cursor-pointer"
                 >
-                  Simpan Guru
+                  {isSavingTeacher ? 'Menyimpan...' : 'Simpan Guru'}
                 </button>
               </div>
             </form>
@@ -3512,16 +3566,18 @@ export const DataMasterView: React.FC = () => {
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
+                  disabled={isSavingTeacher}
                   onClick={() => setEditingTeacher(null)}
-                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg disabled:opacity-50"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg"
+                  disabled={isSavingTeacher}
+                  className="px-4 py-1.5 text-xs font-semibold text-white bg-cyan-700 hover:bg-cyan-800 rounded-lg disabled:opacity-60 cursor-pointer"
                 >
-                  Perbarui Guru
+                  {isSavingTeacher ? 'Menyimpan...' : 'Perbarui Guru'}
                 </button>
               </div>
             </form>

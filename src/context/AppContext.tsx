@@ -59,14 +59,23 @@ import {
   createEmptyScheduleDelta,
   hasScheduleDeltaChanges,
   mergeSchedulesWithDelta,
+  combineScheduleDeltas,
   JournalDelta,
   createEmptyJournalDelta,
   hasJournalDeltaChanges,
   mergeJournalsWithDelta,
+  combineJournalDeltas,
   AttendanceDelta,
   createEmptyAttendanceDelta,
   hasAttendanceDeltaChanges,
   mergeAttendanceWithDelta,
+  combineAttendanceDeltas,
+  EntityDelta,
+  createEmptyEntityDelta,
+  hasEntityDeltaChanges,
+  recordEntityDeltaPatch,
+  combineEntityDeltas,
+  mergeEntitiesWithDelta,
 } from '../data/storeSync';
 import {
   computeSmartScheduleMerge,
@@ -169,12 +178,12 @@ interface AppContextType {
   loginWithCredentials: (username: string, password: string) => Promise<{ success: boolean; message: string; user?: CurrentUser }>;
 
   // Master CRUD
-  addTeacher: (teacher: Teacher) => void;
-  updateTeacher: (teacher: Teacher) => void;
-  deleteTeacher: (id: string) => void;
+  addTeacher: (teacher: Teacher) => Promise<{ success: boolean; error?: string }>;
+  updateTeacher: (teacher: Teacher) => Promise<{ success: boolean; error?: string }>;
+  deleteTeacher: (id: string) => Promise<{ success: boolean; error?: string }>;
   bulkDeleteTeachers: (ids: string[]) => void;
   bulkUpdateTeachers: (ids: string[], updates: Partial<Teacher>) => void;
-  importTeachers: (newTeachers: Teacher[]) => void;
+  importTeachers: (newTeachers: Teacher[]) => Promise<{ success: boolean; error?: string }>;
 
   addSubject: (subject: Subject) => void;
   updateSubject: (subject: Subject) => void;
@@ -590,12 +599,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const pendingServerPatchRef = React.useRef<Record<string, any>>({});
   const pendingCloudPatchRef = React.useRef<Record<string, any>>({});
+  const inFlightCloudPatchRef = React.useRef<Record<string, any>>({});
   const pendingScheduleDeltaRef = React.useRef<ScheduleDelta>(createEmptyScheduleDelta());
   const inFlightScheduleDeltaRef = React.useRef<ScheduleDelta | null>(null);
   const pendingJournalDeltaRef = React.useRef<JournalDelta>(createEmptyJournalDelta());
   const inFlightJournalDeltaRef = React.useRef<JournalDelta | null>(null);
   const pendingAttendanceDeltaRef = React.useRef<AttendanceDelta>(createEmptyAttendanceDelta());
   const inFlightAttendanceDeltaRef = React.useRef<AttendanceDelta | null>(null);
+  const pendingTeacherDeltaRef = React.useRef<EntityDelta<Teacher>>(createEmptyEntityDelta());
+  const inFlightTeacherDeltaRef = React.useRef<EntityDelta<Teacher> | null>(null);
+  const pendingUserAccountDeltaRef = React.useRef<EntityDelta<UserAccount>>(createEmptyEntityDelta());
+  const inFlightUserAccountDeltaRef = React.useRef<EntityDelta<UserAccount> | null>(null);
+  const pendingSubjectDeltaRef = React.useRef<EntityDelta<Subject>>(createEmptyEntityDelta());
+  const inFlightSubjectDeltaRef = React.useRef<EntityDelta<Subject> | null>(null);
+  const pendingClassDeltaRef = React.useRef<EntityDelta<SchoolClass>>(createEmptyEntityDelta());
+  const inFlightClassDeltaRef = React.useRef<EntityDelta<SchoolClass> | null>(null);
+  const pendingDepartmentDeltaRef = React.useRef<EntityDelta<Department>>(createEmptyEntityDelta());
+  const inFlightDepartmentDeltaRef = React.useRef<EntityDelta<Department> | null>(null);
+  const pendingRoomDeltaRef = React.useRef<EntityDelta<Room>>(createEmptyEntityDelta());
+  const inFlightRoomDeltaRef = React.useRef<EntityDelta<Room> | null>(null);
+  const pendingAcademicYearDeltaRef = React.useRef<EntityDelta<AcademicYear>>(createEmptyEntityDelta());
+  const inFlightAcademicYearDeltaRef = React.useRef<EntityDelta<AcademicYear> | null>(null);
   const inFlightCloudFlushCountRef = React.useRef<number>(0);
   const activeFlushPromiseRef = React.useRef<Promise<boolean> | null>(null);
   const flushScheduledRef = React.useRef<boolean>(false);
@@ -603,6 +627,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const lastAutoBackupAtRef = React.useRef<number>(0);
   const autoBackupTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeWeekFilterRef = React.useRef<'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('AUTO');
+  const lastCloudSyncErrorRef = React.useRef<string | null>(null);
+
+  const resetAllPendingDeltas = () => {
+    pendingServerPatchRef.current = {};
+    pendingCloudPatchRef.current = {};
+    inFlightCloudPatchRef.current = {};
+    pendingScheduleDeltaRef.current = createEmptyScheduleDelta();
+    inFlightScheduleDeltaRef.current = null;
+    pendingJournalDeltaRef.current = createEmptyJournalDelta();
+    inFlightJournalDeltaRef.current = null;
+    pendingAttendanceDeltaRef.current = createEmptyAttendanceDelta();
+    inFlightAttendanceDeltaRef.current = null;
+    pendingTeacherDeltaRef.current = createEmptyEntityDelta();
+    inFlightTeacherDeltaRef.current = null;
+    pendingUserAccountDeltaRef.current = createEmptyEntityDelta();
+    inFlightUserAccountDeltaRef.current = null;
+    pendingSubjectDeltaRef.current = createEmptyEntityDelta();
+    inFlightSubjectDeltaRef.current = null;
+    pendingClassDeltaRef.current = createEmptyEntityDelta();
+    inFlightClassDeltaRef.current = null;
+    pendingDepartmentDeltaRef.current = createEmptyEntityDelta();
+    inFlightDepartmentDeltaRef.current = null;
+    pendingRoomDeltaRef.current = createEmptyEntityDelta();
+    inFlightRoomDeltaRef.current = null;
+    pendingAcademicYearDeltaRef.current = createEmptyEntityDelta();
+    inFlightAcademicYearDeltaRef.current = null;
+  };
+
+  const computeEntityDeltaFromLists = <T extends { id?: string }>(
+    prevList: T[],
+    nextList: T[]
+  ): Partial<EntityDelta<T>> | null => {
+    const prevMap = new Map<string, T>();
+    prevList.forEach((item) => {
+      if (item?.id) prevMap.set(item.id, item);
+    });
+    const nextIds = new Set<string>();
+    const upserts: T[] = [];
+    nextList.forEach((item) => {
+      if (item?.id) {
+        nextIds.add(item.id);
+        const old = prevMap.get(item.id);
+        if (!old || JSON.stringify(old) !== JSON.stringify(item)) {
+          upserts.push(item);
+        }
+      }
+    });
+    const deleteIds: string[] = [];
+    prevMap.forEach((_, id) => {
+      if (!nextIds.has(id)) deleteIds.push(id);
+    });
+    if (upserts.length === 0 && deleteIds.length === 0) return null;
+    return { upserts, deleteIds };
+  };
 
   const recordScheduleDelta = (patch: Partial<ScheduleDelta>) => {
     const cur = pendingScheduleDeltaRef.current;
@@ -719,17 +797,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const scheduleDelta = pendingScheduleDeltaRef.current;
     const journalDelta = pendingJournalDeltaRef.current;
     const attendanceDelta = pendingAttendanceDeltaRef.current;
+    const teacherDelta = pendingTeacherDeltaRef.current;
+    const userAccountDelta = pendingUserAccountDeltaRef.current;
+    const subjectDelta = pendingSubjectDeltaRef.current;
+    const classDelta = pendingClassDeltaRef.current;
+    const departmentDelta = pendingDepartmentDeltaRef.current;
+    const roomDelta = pendingRoomDeltaRef.current;
+    const academicYearDelta = pendingAcademicYearDeltaRef.current;
 
     pendingServerPatchRef.current = {};
     pendingCloudPatchRef.current = {};
     pendingScheduleDeltaRef.current = createEmptyScheduleDelta();
     pendingJournalDeltaRef.current = createEmptyJournalDelta();
     pendingAttendanceDeltaRef.current = createEmptyAttendanceDelta();
+    pendingTeacherDeltaRef.current = createEmptyEntityDelta();
+    pendingUserAccountDeltaRef.current = createEmptyEntityDelta();
+    pendingSubjectDeltaRef.current = createEmptyEntityDelta();
+    pendingClassDeltaRef.current = createEmptyEntityDelta();
+    pendingDepartmentDeltaRef.current = createEmptyEntityDelta();
+    pendingRoomDeltaRef.current = createEmptyEntityDelta();
+    pendingAcademicYearDeltaRef.current = createEmptyEntityDelta();
 
     const hasScheduleDelta = hasScheduleDeltaChanges(scheduleDelta);
     const hasJournalDelta = hasJournalDeltaChanges(journalDelta);
     const hasAttendanceDelta = hasAttendanceDeltaChanges(attendanceDelta);
-    const hasTransactionalDelta = hasScheduleDelta || hasJournalDelta || hasAttendanceDelta;
+    const hasTeacherDelta = hasEntityDeltaChanges(teacherDelta);
+    const hasUserAccountDelta = hasEntityDeltaChanges(userAccountDelta);
+    const hasSubjectDelta = hasEntityDeltaChanges(subjectDelta);
+    const hasClassDelta = hasEntityDeltaChanges(classDelta);
+    const hasDepartmentDelta = hasEntityDeltaChanges(departmentDelta);
+    const hasRoomDelta = hasEntityDeltaChanges(roomDelta);
+    const hasAcademicYearDelta = hasEntityDeltaChanges(academicYearDelta);
+    const hasTransactionalDelta =
+      hasScheduleDelta ||
+      hasJournalDelta ||
+      hasAttendanceDelta ||
+      hasTeacherDelta ||
+      hasUserAccountDelta ||
+      hasSubjectDelta ||
+      hasClassDelta ||
+      hasDepartmentDelta ||
+      hasRoomDelta ||
+      hasAcademicYearDelta;
     const hasCloudKeys = Object.keys(cloudPatch).length > 0;
     const hasServerKeys = Object.keys(serverPatch).length > 0;
 
@@ -740,144 +849,265 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const mutationTs = lastLocalMutationAtRef.current || Date.now();
     const updatedByName = currentUser.name || 'Pengguna SIMPATI';
 
-    const runFlush = (async (): Promise<boolean> => {
-      if (hasServerKeys && !hasTransactionalDelta) {
-        const serverKeys = Object.keys(serverPatch);
-        const bodyPayload =
-          serverKeys.length === 1
-            ? {
-                key: serverKeys[0],
-                data: serverPatch[serverKeys[0]],
-                updatedBy: updatedByName,
-                clientId,
-                lastUpdated: mutationTs,
-              }
-            : {
-                fullState: serverPatch,
-                updatedBy: updatedByName,
-                clientId,
-                lastUpdated: mutationTs,
-              };
-
-        fetch('/api/sync', {
+    const postServerSync = async (stateToSync: Record<string, any>, ts: number) => {
+      const keys = Object.keys(stateToSync);
+      if (keys.length === 0) return;
+      const bodyPayload =
+        keys.length === 1
+          ? {
+              key: keys[0],
+              data: stateToSync[keys[0]],
+              updatedBy: updatedByName,
+              clientId,
+              lastUpdated: ts,
+            }
+          : {
+              fullState: stateToSync,
+              updatedBy: updatedByName,
+              clientId,
+              lastUpdated: ts,
+            };
+      try {
+        await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(bodyPayload),
-        }).catch((err) => {
-          console.warn('[SIMPATI Sync] Gagal sinkronisasi data ke server:', err);
         });
+      } catch (err) {
+        console.warn('[SIMPATI Sync] Gagal sinkronisasi data ke server lokal:', err);
       }
+    };
 
+    const runFlush = (async (): Promise<boolean> => {
       if (hasTransactionalDelta || hasCloudKeys) {
         inFlightCloudFlushCountRef.current += 1;
+        inFlightCloudPatchRef.current = cloudPatch;
         if (hasScheduleDelta) inFlightScheduleDeltaRef.current = scheduleDelta;
         if (hasJournalDelta) inFlightJournalDeltaRef.current = journalDelta;
         if (hasAttendanceDelta) inFlightAttendanceDeltaRef.current = attendanceDelta;
+        if (hasTeacherDelta) inFlightTeacherDeltaRef.current = teacherDelta;
+        if (hasUserAccountDelta) inFlightUserAccountDeltaRef.current = userAccountDelta;
+        if (hasSubjectDelta) inFlightSubjectDeltaRef.current = subjectDelta;
+        if (hasClassDelta) inFlightClassDeltaRef.current = classDelta;
+        if (hasDepartmentDelta) inFlightDepartmentDeltaRef.current = departmentDelta;
+        if (hasRoomDelta) inFlightRoomDeltaRef.current = roomDelta;
+        if (hasAcademicYearDelta) inFlightAcademicYearDeltaRef.current = academicYearDelta;
+
         try {
           const mainStoreRef = doc(db, 'simpati_data', 'main_store');
-          if (hasTransactionalDelta) {
-            const committed = await runTransaction(db, async (tx) => {
-              const snap = await tx.get(mainStoreRef);
-              const remoteData = snap.exists() ? snap.data() : {};
-              const remoteTs = typeof remoteData.lastUpdated === 'number' ? remoteData.lastUpdated : 0;
-              const safeTs = Math.max(mutationTs, remoteTs + 1);
+          const committed = await runTransaction(db, async (tx) => {
+            const snap = await tx.get(mainStoreRef);
+            const remoteData = snap.exists() ? snap.data() : {};
+            const remoteTs = typeof remoteData.lastUpdated === 'number' ? remoteData.lastUpdated : 0;
+            const safeTs = Math.max(mutationTs, remoteTs + 1);
 
-              const txPayload: Record<string, any> = {
-                ...cloudPatch,
-                lastUpdated: safeTs,
-                lastUpdatedBy: updatedByName,
-                lastUpdatedByClientId: clientId,
-                isInitialEmpty: false,
-              };
-
-              let mergedSchedules: ScheduleItem[] | undefined;
-              if (hasScheduleDelta) {
-                const remoteSchedules = Array.isArray(remoteData.schedules) ? remoteData.schedules : [];
-                mergedSchedules = stripUndefined(mergeSchedulesWithDelta(remoteSchedules, scheduleDelta));
-                txPayload.schedules = mergedSchedules;
-              }
-
-              let mergedJournals: TeachingJournal[] | undefined;
-              if (hasJournalDelta) {
-                const remoteJournals = Array.isArray(remoteData.journals) ? remoteData.journals : [];
-                mergedJournals = stripUndefined(mergeJournalsWithDelta(remoteJournals, journalDelta));
-                txPayload.journals = mergedJournals;
-              }
-
-              let mergedAttendance: Record<string, AttendanceRecord> | undefined;
-              if (hasAttendanceDelta) {
-                const remoteAtt =
-                  remoteData.attendanceRecords && typeof remoteData.attendanceRecords === 'object'
-                    ? remoteData.attendanceRecords
-                    : {};
-                mergedAttendance = stripUndefined(mergeAttendanceWithDelta(remoteAtt, attendanceDelta));
-                txPayload.attendanceRecords = mergedAttendance;
-              }
-
-              tx.set(mainStoreRef, stripUndefined(txPayload), { merge: true });
-              return { mergedSchedules, mergedJournals, mergedAttendance, safeTs };
-            });
-
-            const serverSyncFullState: Record<string, any> = { ...serverPatch };
-
-            if (committed.mergedSchedules !== undefined) {
-              const finalLocalSchedules = hasScheduleDeltaChanges(pendingScheduleDeltaRef.current)
-                ? mergeSchedulesWithDelta(committed.mergedSchedules, pendingScheduleDeltaRef.current)
-                : committed.mergedSchedules;
-              schedulesRef.current = finalLocalSchedules;
-              setSchedules(finalLocalSchedules);
-              try {
-                localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(finalLocalSchedules));
-              } catch (e) {}
-              serverSyncFullState.schedules = finalLocalSchedules;
-            }
-
-            if (committed.mergedJournals !== undefined) {
-              const finalLocalJournals = hasJournalDeltaChanges(pendingJournalDeltaRef.current)
-                ? mergeJournalsWithDelta(committed.mergedJournals, pendingJournalDeltaRef.current)
-                : committed.mergedJournals;
-              journalsRef.current = finalLocalJournals;
-              setJournals(finalLocalJournals);
-              try {
-                localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(finalLocalJournals));
-              } catch (e) {}
-              serverSyncFullState.journals = finalLocalJournals;
-            }
-
-            if (committed.mergedAttendance !== undefined) {
-              const finalLocalAttendance = hasAttendanceDeltaChanges(pendingAttendanceDeltaRef.current)
-                ? mergeAttendanceWithDelta(committed.mergedAttendance, pendingAttendanceDeltaRef.current)
-                : committed.mergedAttendance;
-              attendanceRecordsRef.current = finalLocalAttendance;
-              setAttendanceRecords(finalLocalAttendance);
-              try {
-                localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(finalLocalAttendance));
-              } catch (e) {}
-              serverSyncFullState.attendanceRecords = finalLocalAttendance;
-            }
-
-            // Sinkronkan server lokal dengan hasil transaksi gabungan agar konsisten
-            fetch('/api/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fullState: stripUndefined(serverSyncFullState),
-                updatedBy: updatedByName,
-                clientId,
-                lastUpdated: committed.safeTs,
-              }),
-            }).catch(() => {});
-          } else {
-            const sanitizedPatch = stripUndefined({
+            const txPayload: Record<string, any> = {
               ...cloudPatch,
-              lastUpdated: mutationTs,
+              lastUpdated: safeTs,
               lastUpdatedBy: updatedByName,
               lastUpdatedByClientId: clientId,
               isInitialEmpty: false,
-            });
-            await setDoc(mainStoreRef, sanitizedPatch, { merge: true });
+            };
+
+            let mergedTeachers: Teacher[] | undefined;
+            if (hasTeacherDelta) {
+              const remoteTeachers = Array.isArray(remoteData.teachers) ? remoteData.teachers : [];
+              mergedTeachers = stripUndefined(mergeEntitiesWithDelta(remoteTeachers, teacherDelta));
+              txPayload.teachers = mergedTeachers;
+            }
+
+            let mergedUserAccounts: UserAccount[] | undefined;
+            if (hasUserAccountDelta) {
+              const remoteAccounts = Array.isArray(remoteData.userAccounts) ? remoteData.userAccounts : [];
+              mergedUserAccounts = stripUndefined(
+                ensureDefaultAccounts(mergeEntitiesWithDelta(remoteAccounts, userAccountDelta))
+              );
+              txPayload.userAccounts = mergedUserAccounts;
+            }
+
+            let mergedSubjects: Subject[] | undefined;
+            if (hasSubjectDelta) {
+              const remoteSubjects = Array.isArray(remoteData.subjects) ? remoteData.subjects : [];
+              mergedSubjects = stripUndefined(mergeEntitiesWithDelta(remoteSubjects, subjectDelta));
+              txPayload.subjects = mergedSubjects;
+            }
+
+            let mergedClasses: SchoolClass[] | undefined;
+            if (hasClassDelta) {
+              const remoteClasses = Array.isArray(remoteData.classes) ? remoteData.classes : [];
+              mergedClasses = stripUndefined(mergeEntitiesWithDelta(remoteClasses, classDelta));
+              txPayload.classes = mergedClasses;
+            }
+
+            let mergedDepartments: Department[] | undefined;
+            if (hasDepartmentDelta) {
+              const remoteDepartments = Array.isArray(remoteData.departments) ? remoteData.departments : [];
+              mergedDepartments = stripUndefined(mergeEntitiesWithDelta(remoteDepartments, departmentDelta));
+              txPayload.departments = mergedDepartments;
+            }
+
+            let mergedRooms: Room[] | undefined;
+            if (hasRoomDelta) {
+              const remoteRooms = Array.isArray(remoteData.rooms) ? remoteData.rooms : [];
+              mergedRooms = stripUndefined(mergeEntitiesWithDelta(remoteRooms, roomDelta));
+              txPayload.rooms = mergedRooms;
+            }
+
+            let mergedAcademicYears: AcademicYear[] | undefined;
+            if (hasAcademicYearDelta) {
+              const remoteAcademicYears = Array.isArray(remoteData.academicYears) ? remoteData.academicYears : [];
+              mergedAcademicYears = stripUndefined(mergeEntitiesWithDelta(remoteAcademicYears, academicYearDelta));
+              txPayload.academicYears = mergedAcademicYears;
+            }
+
+            let mergedSchedules: ScheduleItem[] | undefined;
+            if (hasScheduleDelta) {
+              const remoteSchedules = Array.isArray(remoteData.schedules) ? remoteData.schedules : [];
+              mergedSchedules = stripUndefined(mergeSchedulesWithDelta(remoteSchedules, scheduleDelta));
+              txPayload.schedules = mergedSchedules;
+            }
+
+            let mergedJournals: TeachingJournal[] | undefined;
+            if (hasJournalDelta) {
+              const remoteJournals = Array.isArray(remoteData.journals) ? remoteData.journals : [];
+              mergedJournals = stripUndefined(mergeJournalsWithDelta(remoteJournals, journalDelta));
+              txPayload.journals = mergedJournals;
+            }
+
+            let mergedAttendance: Record<string, AttendanceRecord> | undefined;
+            if (hasAttendanceDelta) {
+              const remoteAtt =
+                remoteData.attendanceRecords && typeof remoteData.attendanceRecords === 'object'
+                  ? remoteData.attendanceRecords
+                  : {};
+              mergedAttendance = stripUndefined(mergeAttendanceWithDelta(remoteAtt, attendanceDelta));
+              txPayload.attendanceRecords = mergedAttendance;
+            }
+
+            tx.set(mainStoreRef, stripUndefined(txPayload), { merge: true });
+            return {
+              mergedTeachers,
+              mergedUserAccounts,
+              mergedSubjects,
+              mergedClasses,
+              mergedDepartments,
+              mergedRooms,
+              mergedAcademicYears,
+              mergedSchedules,
+              mergedJournals,
+              mergedAttendance,
+              safeTs,
+            };
+          });
+
+          const serverSyncFullState: Record<string, any> = { ...serverPatch, ...cloudPatch };
+
+          if (committed.mergedTeachers !== undefined) {
+            const finalLocal = hasEntityDeltaChanges(pendingTeacherDeltaRef.current)
+              ? mergeEntitiesWithDelta(committed.mergedTeachers, pendingTeacherDeltaRef.current)
+              : committed.mergedTeachers;
+            teachersRef.current = finalLocal;
+            setTeachers(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.teachers = finalLocal;
           }
 
+          if (committed.mergedUserAccounts !== undefined) {
+            const finalLocal = ensureDefaultAccounts(
+              hasEntityDeltaChanges(pendingUserAccountDeltaRef.current)
+                ? mergeEntitiesWithDelta(committed.mergedUserAccounts, pendingUserAccountDeltaRef.current)
+                : committed.mergedUserAccounts
+            );
+            userAccountsRef.current = finalLocal;
+            setUserAccounts(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.userAccounts = finalLocal;
+          }
+
+          if (committed.mergedSubjects !== undefined) {
+            const finalLocal = hasEntityDeltaChanges(pendingSubjectDeltaRef.current)
+              ? mergeEntitiesWithDelta(committed.mergedSubjects, pendingSubjectDeltaRef.current)
+              : committed.mergedSubjects;
+            subjectsRef.current = finalLocal;
+            setSubjects(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.subjects = finalLocal;
+          }
+
+          if (committed.mergedClasses !== undefined) {
+            const finalLocal = hasEntityDeltaChanges(pendingClassDeltaRef.current)
+              ? mergeEntitiesWithDelta(committed.mergedClasses, pendingClassDeltaRef.current)
+              : committed.mergedClasses;
+            classesRef.current = finalLocal;
+            setClasses(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.classes = finalLocal;
+          }
+
+          if (committed.mergedDepartments !== undefined) {
+            const finalLocal = hasEntityDeltaChanges(pendingDepartmentDeltaRef.current)
+              ? mergeEntitiesWithDelta(committed.mergedDepartments, pendingDepartmentDeltaRef.current)
+              : committed.mergedDepartments;
+            departmentsRef.current = finalLocal;
+            setDepartments(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.departments = finalLocal;
+          }
+
+          if (committed.mergedRooms !== undefined) {
+            const finalLocal = hasEntityDeltaChanges(pendingRoomDeltaRef.current)
+              ? mergeEntitiesWithDelta(committed.mergedRooms, pendingRoomDeltaRef.current)
+              : committed.mergedRooms;
+            roomsRef.current = finalLocal;
+            setRooms(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.rooms = finalLocal;
+          }
+
+          if (committed.mergedAcademicYears !== undefined) {
+            const finalLocal = hasEntityDeltaChanges(pendingAcademicYearDeltaRef.current)
+              ? mergeEntitiesWithDelta(committed.mergedAcademicYears, pendingAcademicYearDeltaRef.current)
+              : committed.mergedAcademicYears;
+            academicYearsRef.current = finalLocal;
+            setAcademicYears(finalLocal);
+            try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(finalLocal)); } catch (e) {}
+            serverSyncFullState.academicYears = finalLocal;
+          }
+
+          if (committed.mergedSchedules !== undefined) {
+            const finalLocalSchedules = hasScheduleDeltaChanges(pendingScheduleDeltaRef.current)
+              ? mergeSchedulesWithDelta(committed.mergedSchedules, pendingScheduleDeltaRef.current)
+              : committed.mergedSchedules;
+            schedulesRef.current = finalLocalSchedules;
+            setSchedules(finalLocalSchedules);
+            try { localStorage.setItem(`${STORAGE_KEY}_schedules`, JSON.stringify(finalLocalSchedules)); } catch (e) {}
+            serverSyncFullState.schedules = finalLocalSchedules;
+          }
+
+          if (committed.mergedJournals !== undefined) {
+            const finalLocalJournals = hasJournalDeltaChanges(pendingJournalDeltaRef.current)
+              ? mergeJournalsWithDelta(committed.mergedJournals, pendingJournalDeltaRef.current)
+              : committed.mergedJournals;
+            journalsRef.current = finalLocalJournals;
+            setJournals(finalLocalJournals);
+            try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(finalLocalJournals)); } catch (e) {}
+            serverSyncFullState.journals = finalLocalJournals;
+          }
+
+          if (committed.mergedAttendance !== undefined) {
+            const finalLocalAttendance = hasAttendanceDeltaChanges(pendingAttendanceDeltaRef.current)
+              ? mergeAttendanceWithDelta(committed.mergedAttendance, pendingAttendanceDeltaRef.current)
+              : committed.mergedAttendance;
+            attendanceRecordsRef.current = finalLocalAttendance;
+            setAttendanceRecords(finalLocalAttendance);
+            try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(finalLocalAttendance)); } catch (e) {}
+            serverSyncFullState.attendanceRecords = finalLocalAttendance;
+          }
+
+          // Sinkronkan server lokal dengan hasil transaksi gabungan dan tunggu selesai agar konsisten saat refresh
+          await postServerSync(stripUndefined(serverSyncFullState), committed.safeTs);
+
+          lastCloudSyncErrorRef.current = null;
           setIsCloudConnected(true);
           setCloudSyncError(null);
           if (hasScheduleDelta || hasJournalDelta) {
@@ -887,16 +1117,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
           return true;
         } catch (err: any) {
+          // Kembalikan delta yang gagal ke antrean agar tidak pernah hilang & tidak tertimpa onSnapshot
+          if (hasCloudKeys) {
+            pendingCloudPatchRef.current = { ...cloudPatch, ...pendingCloudPatchRef.current };
+          }
+          if (hasScheduleDelta) {
+            pendingScheduleDeltaRef.current = combineScheduleDeltas(scheduleDelta, pendingScheduleDeltaRef.current);
+          }
+          if (hasJournalDelta) {
+            pendingJournalDeltaRef.current = combineJournalDeltas(journalDelta, pendingJournalDeltaRef.current);
+          }
+          if (hasAttendanceDelta) {
+            pendingAttendanceDeltaRef.current = combineAttendanceDeltas(attendanceDelta, pendingAttendanceDeltaRef.current);
+          }
+          if (hasTeacherDelta) {
+            pendingTeacherDeltaRef.current = combineEntityDeltas(teacherDelta, pendingTeacherDeltaRef.current);
+          }
+          if (hasUserAccountDelta) {
+            pendingUserAccountDeltaRef.current = combineEntityDeltas(userAccountDelta, pendingUserAccountDeltaRef.current);
+          }
+          if (hasSubjectDelta) {
+            pendingSubjectDeltaRef.current = combineEntityDeltas(subjectDelta, pendingSubjectDeltaRef.current);
+          }
+          if (hasClassDelta) {
+            pendingClassDeltaRef.current = combineEntityDeltas(classDelta, pendingClassDeltaRef.current);
+          }
+          if (hasDepartmentDelta) {
+            pendingDepartmentDeltaRef.current = combineEntityDeltas(departmentDelta, pendingDepartmentDeltaRef.current);
+          }
+          if (hasRoomDelta) {
+            pendingRoomDeltaRef.current = combineEntityDeltas(roomDelta, pendingRoomDeltaRef.current);
+          }
+          if (hasAcademicYearDelta) {
+            pendingAcademicYearDeltaRef.current = combineEntityDeltas(academicYearDelta, pendingAcademicYearDeltaRef.current);
+          }
+
+          if (hasServerKeys) {
+            await postServerSync(stripUndefined(serverPatch), mutationTs);
+          }
+
           handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+          const msg = err?.message || 'Gagal menyimpan ke Cloud Firestore';
+          lastCloudSyncErrorRef.current = msg;
           setIsCloudConnected(false);
-          setCloudSyncError(err?.message || 'Gagal menyimpan ke Cloud Firestore');
+          setCloudSyncError(msg);
           return false;
         } finally {
           inFlightCloudFlushCountRef.current = Math.max(0, inFlightCloudFlushCountRef.current - 1);
+          inFlightCloudPatchRef.current = {};
           inFlightScheduleDeltaRef.current = null;
           inFlightJournalDeltaRef.current = null;
           inFlightAttendanceDeltaRef.current = null;
+          inFlightTeacherDeltaRef.current = null;
+          inFlightUserAccountDeltaRef.current = null;
+          inFlightSubjectDeltaRef.current = null;
+          inFlightClassDeltaRef.current = null;
+          inFlightDepartmentDeltaRef.current = null;
+          inFlightRoomDeltaRef.current = null;
+          inFlightAcademicYearDeltaRef.current = null;
         }
+      }
+
+      if (hasServerKeys) {
+        await postServerSync(stripUndefined(serverPatch), mutationTs);
       }
 
       return true;
@@ -908,13 +1191,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       activeFlushPromiseRef.current = null;
     }
 
-    // Jika masih ada perubahan baru yang antre selama transaksi berjalan, flush lagi
+    // Jika masih ada perubahan baru yang antre selama transaksi berjalan (dan flush tadi sukses), flush lagi
     if (
-      hasScheduleDeltaChanges(pendingScheduleDeltaRef.current) ||
-      hasJournalDeltaChanges(pendingJournalDeltaRef.current) ||
-      hasAttendanceDeltaChanges(pendingAttendanceDeltaRef.current) ||
-      Object.keys(pendingCloudPatchRef.current).length > 0 ||
-      Object.keys(pendingServerPatchRef.current).length > 0
+      result &&
+      (hasScheduleDeltaChanges(pendingScheduleDeltaRef.current) ||
+        hasJournalDeltaChanges(pendingJournalDeltaRef.current) ||
+        hasAttendanceDeltaChanges(pendingAttendanceDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingTeacherDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingUserAccountDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingSubjectDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingClassDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingDepartmentDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingRoomDeltaRef.current) ||
+        hasEntityDeltaChanges(pendingAcademicYearDeltaRef.current) ||
+        Object.keys(pendingCloudPatchRef.current).length > 0 ||
+        Object.keys(pendingServerPatchRef.current).length > 0)
     ) {
       return flushSyncQueue();
     }
@@ -1059,6 +1350,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isInitialEmpty: false,
       });
 
+      resetAllPendingDeltas();
       localMutationVersionRef.current += 1;
       lastLocalMutationAtRef.current = now;
       applyRemoteStore(restoredStore);
@@ -1163,9 +1455,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const semesterString = activeAy ? `${activeAy.name}` : 'Semester Ganjil · 2026/2027';
 
   // Helper fungsi mutasi data: menyimpan langsung ke ref, state, localStorage, server lokal, dan Cloud Firestore terpusat
-  const updateTeachersAndSync = (updater: Teacher[] | ((prev: Teacher[]) => Teacher[])) => {
-    const rawNext = typeof updater === 'function' ? updater(teachersRef.current) : updater;
+  const updateTeachersAndSync = (
+    updater: Teacher[] | ((prev: Teacher[]) => Teacher[]),
+    explicitDelta?: Partial<EntityDelta<Teacher>>
+  ) => {
+    const prevList = teachersRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, next);
+    if (delta) {
+      pendingTeacherDeltaRef.current = recordEntityDeltaPatch(pendingTeacherDeltaRef.current, stripUndefined(delta));
+    }
     teachersRef.current = next;
     localMutationVersionRef.current += 1;
     setTeachers(next);
@@ -1173,12 +1473,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('teachers', next);
-    syncToCloud({ teachers: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
-  const updateSubjectsAndSync = (updater: Subject[] | ((prev: Subject[]) => Subject[])) => {
-    const rawNext = typeof updater === 'function' ? updater(subjectsRef.current) : updater;
+  const updateSubjectsAndSync = (
+    updater: Subject[] | ((prev: Subject[]) => Subject[]),
+    explicitDelta?: Partial<EntityDelta<Subject>>
+  ) => {
+    const prevList = subjectsRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, next);
+    if (delta) {
+      pendingSubjectDeltaRef.current = recordEntityDeltaPatch(pendingSubjectDeltaRef.current, stripUndefined(delta));
+    }
     subjectsRef.current = next;
     localMutationVersionRef.current += 1;
     setSubjects(next);
@@ -1186,12 +1495,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('subjects', next);
-    syncToCloud({ subjects: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
-  const updateClassesAndSync = (updater: SchoolClass[] | ((prev: SchoolClass[]) => SchoolClass[])) => {
-    const rawNext = typeof updater === 'function' ? updater(classesRef.current) : updater;
+  const updateClassesAndSync = (
+    updater: SchoolClass[] | ((prev: SchoolClass[]) => SchoolClass[]),
+    explicitDelta?: Partial<EntityDelta<SchoolClass>>
+  ) => {
+    const prevList = classesRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, next);
+    if (delta) {
+      pendingClassDeltaRef.current = recordEntityDeltaPatch(pendingClassDeltaRef.current, stripUndefined(delta));
+    }
     classesRef.current = next;
     localMutationVersionRef.current += 1;
     setClasses(next);
@@ -1199,12 +1517,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('classes', next);
-    syncToCloud({ classes: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
-  const updateDepartmentsAndSync = (updater: Department[] | ((prev: Department[]) => Department[])) => {
-    const rawNext = typeof updater === 'function' ? updater(departmentsRef.current) : updater;
+  const updateDepartmentsAndSync = (
+    updater: Department[] | ((prev: Department[]) => Department[]),
+    explicitDelta?: Partial<EntityDelta<Department>>
+  ) => {
+    const prevList = departmentsRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, next);
+    if (delta) {
+      pendingDepartmentDeltaRef.current = recordEntityDeltaPatch(pendingDepartmentDeltaRef.current, stripUndefined(delta));
+    }
     departmentsRef.current = next;
     localMutationVersionRef.current += 1;
     setDepartments(next);
@@ -1212,12 +1539,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('departments', next);
-    syncToCloud({ departments: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
-  const updateRoomsAndSync = (updater: Room[] | ((prev: Room[]) => Room[])) => {
-    const rawNext = typeof updater === 'function' ? updater(roomsRef.current) : updater;
+  const updateRoomsAndSync = (
+    updater: Room[] | ((prev: Room[]) => Room[]),
+    explicitDelta?: Partial<EntityDelta<Room>>
+  ) => {
+    const prevList = roomsRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, next);
+    if (delta) {
+      pendingRoomDeltaRef.current = recordEntityDeltaPatch(pendingRoomDeltaRef.current, stripUndefined(delta));
+    }
     roomsRef.current = next;
     localMutationVersionRef.current += 1;
     setRooms(next);
@@ -1225,12 +1561,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('rooms', next);
-    syncToCloud({ rooms: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
-  const updateAcademicYearsAndSync = (updater: AcademicYear[] | ((prev: AcademicYear[]) => AcademicYear[])) => {
-    const rawNext = typeof updater === 'function' ? updater(academicYearsRef.current) : updater;
+  const updateAcademicYearsAndSync = (
+    updater: AcademicYear[] | ((prev: AcademicYear[]) => AcademicYear[]),
+    explicitDelta?: Partial<EntityDelta<AcademicYear>>
+  ) => {
+    const prevList = academicYearsRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const next = stripUndefined(rawNext);
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, next);
+    if (delta) {
+      pendingAcademicYearDeltaRef.current = recordEntityDeltaPatch(pendingAcademicYearDeltaRef.current, stripUndefined(delta));
+    }
     academicYearsRef.current = next;
     localMutationVersionRef.current += 1;
     setAcademicYears(next);
@@ -1238,7 +1583,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(next));
     } catch (e) {}
     syncToServer('academicYears', next);
-    syncToCloud({ academicYears: next });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
   const updateSchedulesAndSync = (
@@ -1325,9 +1671,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     scheduleSyncFlush();
   };
 
-  const updateUserAccountsAndSync = (updater: UserAccount[] | ((prev: UserAccount[]) => UserAccount[])) => {
-    const rawNext = typeof updater === 'function' ? updater(userAccountsRef.current) : updater;
+  const updateUserAccountsAndSync = (
+    updater: UserAccount[] | ((prev: UserAccount[]) => UserAccount[]),
+    explicitDelta?: Partial<EntityDelta<UserAccount>>
+  ) => {
+    const prevList = userAccountsRef.current;
+    const rawNext = typeof updater === 'function' ? updater(prevList) : updater;
     const reconciled = stripUndefined(ensureDefaultAccounts(rawNext));
+    const delta = explicitDelta || computeEntityDeltaFromLists(prevList, reconciled);
+    if (delta) {
+      pendingUserAccountDeltaRef.current = recordEntityDeltaPatch(
+        pendingUserAccountDeltaRef.current,
+        stripUndefined(delta)
+      );
+    }
     userAccountsRef.current = reconciled;
     localMutationVersionRef.current += 1;
     setUserAccounts(reconciled);
@@ -1335,7 +1692,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled));
     } catch (e) {}
     syncToServer('userAccounts', reconciled);
-    syncToCloud({ userAccounts: reconciled });
+    lastLocalMutationAtRef.current = Date.now();
+    scheduleSyncFlush();
   };
 
   const updateJournalsAndSync = (
@@ -1386,34 +1744,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const applyRemoteStore = (s: Record<string, any>) => {
     if (Array.isArray(s.teachers)) {
-      teachersRef.current = s.teachers;
-      setTeachers(s.teachers);
-      try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(s.teachers)); } catch (e) {}
+      let mergedTeachers = s.teachers;
+      if (inFlightTeacherDeltaRef.current) {
+        mergedTeachers = mergeEntitiesWithDelta(mergedTeachers, inFlightTeacherDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingTeacherDeltaRef.current)) {
+        mergedTeachers = mergeEntitiesWithDelta(mergedTeachers, pendingTeacherDeltaRef.current);
+      }
+      teachersRef.current = mergedTeachers;
+      setTeachers(mergedTeachers);
+      try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(mergedTeachers)); } catch (e) {}
     }
     if (Array.isArray(s.subjects)) {
-      subjectsRef.current = s.subjects;
-      setSubjects(s.subjects);
-      try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(s.subjects)); } catch (e) {}
+      let mergedSubjects = s.subjects;
+      if (inFlightSubjectDeltaRef.current) {
+        mergedSubjects = mergeEntitiesWithDelta(mergedSubjects, inFlightSubjectDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingSubjectDeltaRef.current)) {
+        mergedSubjects = mergeEntitiesWithDelta(mergedSubjects, pendingSubjectDeltaRef.current);
+      }
+      subjectsRef.current = mergedSubjects;
+      setSubjects(mergedSubjects);
+      try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(mergedSubjects)); } catch (e) {}
     }
     if (Array.isArray(s.classes)) {
-      classesRef.current = s.classes;
-      setClasses(s.classes);
-      try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(s.classes)); } catch (e) {}
+      let mergedClasses = s.classes;
+      if (inFlightClassDeltaRef.current) {
+        mergedClasses = mergeEntitiesWithDelta(mergedClasses, inFlightClassDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingClassDeltaRef.current)) {
+        mergedClasses = mergeEntitiesWithDelta(mergedClasses, pendingClassDeltaRef.current);
+      }
+      classesRef.current = mergedClasses;
+      setClasses(mergedClasses);
+      try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(mergedClasses)); } catch (e) {}
     }
     if (Array.isArray(s.departments)) {
-      departmentsRef.current = s.departments;
-      setDepartments(s.departments);
-      try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(s.departments)); } catch (e) {}
+      let mergedDepartments = s.departments;
+      if (inFlightDepartmentDeltaRef.current) {
+        mergedDepartments = mergeEntitiesWithDelta(mergedDepartments, inFlightDepartmentDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingDepartmentDeltaRef.current)) {
+        mergedDepartments = mergeEntitiesWithDelta(mergedDepartments, pendingDepartmentDeltaRef.current);
+      }
+      departmentsRef.current = mergedDepartments;
+      setDepartments(mergedDepartments);
+      try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(mergedDepartments)); } catch (e) {}
     }
     if (Array.isArray(s.rooms)) {
-      roomsRef.current = s.rooms;
-      setRooms(s.rooms);
-      try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(s.rooms)); } catch (e) {}
+      let mergedRooms = s.rooms;
+      if (inFlightRoomDeltaRef.current) {
+        mergedRooms = mergeEntitiesWithDelta(mergedRooms, inFlightRoomDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingRoomDeltaRef.current)) {
+        mergedRooms = mergeEntitiesWithDelta(mergedRooms, pendingRoomDeltaRef.current);
+      }
+      roomsRef.current = mergedRooms;
+      setRooms(mergedRooms);
+      try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(mergedRooms)); } catch (e) {}
     }
     if (Array.isArray(s.academicYears)) {
-      academicYearsRef.current = s.academicYears;
-      setAcademicYears(s.academicYears);
-      try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(s.academicYears)); } catch (e) {}
+      let mergedAcademicYears = s.academicYears;
+      if (inFlightAcademicYearDeltaRef.current) {
+        mergedAcademicYears = mergeEntitiesWithDelta(mergedAcademicYears, inFlightAcademicYearDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingAcademicYearDeltaRef.current)) {
+        mergedAcademicYears = mergeEntitiesWithDelta(mergedAcademicYears, pendingAcademicYearDeltaRef.current);
+      }
+      academicYearsRef.current = mergedAcademicYears;
+      setAcademicYears(mergedAcademicYears);
+      try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(mergedAcademicYears)); } catch (e) {}
     }
     if (Array.isArray(s.schedules)) {
       let mergedSchedules = s.schedules;
@@ -1440,7 +1840,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(mergedAttendance)); } catch (e) {}
     }
     if (Array.isArray(s.userAccounts)) {
-      const reconciled = ensureDefaultAccounts(s.userAccounts);
+      let mergedAccounts = s.userAccounts;
+      if (inFlightUserAccountDeltaRef.current) {
+        mergedAccounts = mergeEntitiesWithDelta(mergedAccounts, inFlightUserAccountDeltaRef.current);
+      }
+      if (hasEntityDeltaChanges(pendingUserAccountDeltaRef.current)) {
+        mergedAccounts = mergeEntitiesWithDelta(mergedAccounts, pendingUserAccountDeltaRef.current);
+      }
+      const reconciled = ensureDefaultAccounts(mergedAccounts);
       userAccountsRef.current = reconciled;
       setUserAccounts(reconciled);
       try { localStorage.setItem(`${STORAGE_KEY}_user_accounts`, JSON.stringify(reconciled)); } catch (e) {}
@@ -1457,16 +1864,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setJournals(mergedJournals);
       try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(mergedJournals)); } catch (e) {}
     }
-    if (s.monthlyWeekSchedules && typeof s.monthlyWeekSchedules === 'object' && !Array.isArray(s.monthlyWeekSchedules)) {
-      monthlyWeekSchedulesRef.current = s.monthlyWeekSchedules;
-      setMonthlyWeekSchedules(s.monthlyWeekSchedules);
-      setRealtimeWeekType(resolveWeekRotationForDate(new Date(), s.monthlyWeekSchedules));
-      try { localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify(s.monthlyWeekSchedules)); } catch (e) {}
+    const pendingMonthlyWeeks =
+      pendingCloudPatchRef.current.monthlyWeekSchedules ?? inFlightCloudPatchRef.current.monthlyWeekSchedules;
+    const effectiveMonthlyWeeks = pendingMonthlyWeeks || s.monthlyWeekSchedules;
+    if (effectiveMonthlyWeeks && typeof effectiveMonthlyWeeks === 'object' && !Array.isArray(effectiveMonthlyWeeks)) {
+      monthlyWeekSchedulesRef.current = effectiveMonthlyWeeks;
+      setMonthlyWeekSchedules(effectiveMonthlyWeeks);
+      setRealtimeWeekType(resolveWeekRotationForDate(new Date(), effectiveMonthlyWeeks));
+      try { localStorage.setItem(`${STORAGE_KEY}_monthly_weeks`, JSON.stringify(effectiveMonthlyWeeks)); } catch (e) {}
     }
-    if (s.activeWeekFilter) {
-      activeWeekFilterRef.current = s.activeWeekFilter;
-      setActiveWeekFilterState(s.activeWeekFilter);
-      try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, s.activeWeekFilter); } catch (e) {}
+    const pendingWeekFilter =
+      pendingCloudPatchRef.current.activeWeekFilter ?? inFlightCloudPatchRef.current.activeWeekFilter;
+    const effectiveFilter = pendingWeekFilter || s.activeWeekFilter;
+    if (effectiveFilter) {
+      activeWeekFilterRef.current = effectiveFilter;
+      setActiveWeekFilterState(effectiveFilter);
+      try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, effectiveFilter); } catch (e) {}
     }
   };
 
@@ -1494,6 +1907,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (cloudRes.value.exists()) {
         cloudData = cloudRes.value.data();
       }
+      lastCloudSyncErrorRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
     } else {
@@ -1700,12 +2114,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
             if (!key && data && typeof data === 'object') {
               applyRemoteStore(data);
-            } else if (key === 'teachers' && Array.isArray(data)) { teachersRef.current = data; setTeachers(data); try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'subjects' && Array.isArray(data)) { subjectsRef.current = data; setSubjects(data); try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'classes' && Array.isArray(data)) { classesRef.current = data; setClasses(data); try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'departments' && Array.isArray(data)) { departmentsRef.current = data; setDepartments(data); try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'rooms' && Array.isArray(data)) { roomsRef.current = data; setRooms(data); try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data)); } catch (e) {} }
-            else if (key === 'academicYears' && Array.isArray(data)) { academicYearsRef.current = data; setAcademicYears(data); try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data)); } catch (e) {} }
+            } else if (key === 'teachers' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingTeacherDeltaRef.current)) return;
+              teachersRef.current = data;
+              setTeachers(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_teachers`, JSON.stringify(data)); } catch (e) {}
+            }
+            else if (key === 'subjects' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingSubjectDeltaRef.current)) return;
+              subjectsRef.current = data;
+              setSubjects(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_subjects`, JSON.stringify(data)); } catch (e) {}
+            }
+            else if (key === 'classes' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingClassDeltaRef.current)) return;
+              classesRef.current = data;
+              setClasses(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_classes`, JSON.stringify(data)); } catch (e) {}
+            }
+            else if (key === 'departments' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingDepartmentDeltaRef.current)) return;
+              departmentsRef.current = data;
+              setDepartments(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_departments`, JSON.stringify(data)); } catch (e) {}
+            }
+            else if (key === 'rooms' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingRoomDeltaRef.current)) return;
+              roomsRef.current = data;
+              setRooms(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_rooms`, JSON.stringify(data)); } catch (e) {}
+            }
+            else if (key === 'academicYears' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingAcademicYearDeltaRef.current)) return;
+              academicYearsRef.current = data;
+              setAcademicYears(data);
+              try { localStorage.setItem(`${STORAGE_KEY}_academic_years`, JSON.stringify(data)); } catch (e) {}
+            }
             else if (key === 'schedules' && Array.isArray(data)) {
               if (inFlightCloudFlushCountRef.current > 0 || hasScheduleDeltaChanges(pendingScheduleDeltaRef.current)) {
                 return;
@@ -1721,6 +2165,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               try { localStorage.setItem(`${STORAGE_KEY}_attendance`, JSON.stringify(data)); } catch (e) {}
             }
             else if (key === 'userAccounts' && Array.isArray(data)) {
+              if (inFlightCloudFlushCountRef.current > 0 || hasEntityDeltaChanges(pendingUserAccountDeltaRef.current)) return;
               const reconciled = ensureDefaultAccounts(data);
               userAccountsRef.current = reconciled;
               setUserAccounts(reconciled);
@@ -1733,11 +2178,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               try { localStorage.setItem(`${STORAGE_KEY}_journals`, JSON.stringify(data)); } catch (e) {}
             }
             else if (key === 'activeWeekFilter' && typeof data === 'string') {
+              if (inFlightCloudFlushCountRef.current > 0 || pendingCloudPatchRef.current.activeWeekFilter !== undefined) return;
               activeWeekFilterRef.current = data as any;
               setActiveWeekFilterState(data as any);
               try { localStorage.setItem(`${STORAGE_KEY}_week_filter`, data); } catch (e) {}
             }
             else if (key === 'monthlyWeekSchedules' && typeof data === 'object' && data !== null) {
+              if (inFlightCloudFlushCountRef.current > 0 || pendingCloudPatchRef.current.monthlyWeekSchedules !== undefined) return;
               monthlyWeekSchedulesRef.current = data;
               setMonthlyWeekSchedules(data);
               setRealtimeWeekType(resolveWeekRotationForDate(new Date(), data));
@@ -2291,44 +2738,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Master CRUD & Bulk Import dengan Sinkronisasi Otomatis ke Akun, Jadwal & Relasi Lainnya
-  const addTeacher = (teacher: Teacher) => {
-    updateTeachersAndSync((prev) => [...prev, teacher]);
+  const addTeacher = async (teacher: Teacher): Promise<{ success: boolean; error?: string }> => {
+    const cleanTeacher = stripUndefined(teacher);
+    updateTeachersAndSync((prev) => [...prev, cleanTeacher], { upserts: [cleanTeacher] });
     // Otomatis sinkronkan dan buatkan akun login untuk guru baru
     updateUserAccountsAndSync((prev) => {
-      const exists = prev.some((a) => a.teacherId === teacher.id || a.username.toLowerCase() === teacher.code.toLowerCase());
+      const exists = prev.some(
+        (a) => a.teacherId === cleanTeacher.id || a.username.toLowerCase() === cleanTeacher.code.toLowerCase()
+      );
       if (exists) return prev;
-      const piketDays = teacher.piketDays || (teacher.isPiketToday ? ['Selasa'] : []);
+      const piketDays = cleanTeacher.piketDays || (cleanTeacher.isPiketToday ? ['Selasa'] : []);
       const newAcc: UserAccount = {
-        id: `usr-${teacher.id}`,
-        username: teacher.code,
+        id: `usr-${cleanTeacher.id}`,
+        username: cleanTeacher.code,
         password: 'semakasari123!',
-        name: teacher.name,
+        name: cleanTeacher.name,
         role: 'guru',
-        teacherId: teacher.id,
-        teacherCode: teacher.code,
-        nip: teacher.nip,
-        email: teacher.email,
+        teacherId: cleanTeacher.id,
+        teacherCode: cleanTeacher.code,
+        nip: cleanTeacher.nip,
+        email: cleanTeacher.email,
         piketDays,
         status: 'aktif',
         additionalDuty: piketDays.length > 0 ? `Guru Piket (${piketDays.join(', ')})` : undefined,
       };
       return [...prev, newAcc];
     });
+    const ok = await flushSyncQueue();
+    return {
+      success: ok,
+      error: ok ? undefined : (lastCloudSyncErrorRef.current || 'Gagal menyimpan data guru ke Cloud Firestore.'),
+    };
   };
 
-  const updateTeacher = (teacher: Teacher) => {
-    updateTeachersAndSync((prev) => prev.map((t) => (t.id === teacher.id ? teacher : t)));
+  const updateTeacher = async (teacher: Teacher): Promise<{ success: boolean; error?: string }> => {
+    const cleanTeacher = stripUndefined(teacher);
+    updateTeachersAndSync((prev) => prev.map((t) => (t.id === cleanTeacher.id ? cleanTeacher : t)), {
+      upserts: [cleanTeacher],
+    });
     // Sinkronkan ke akun login guru
     updateUserAccountsAndSync((prev) =>
       prev.map((a) =>
-        a.teacherId === teacher.id
+        a.teacherId === cleanTeacher.id
           ? {
               ...a,
-              name: teacher.name,
-              nip: teacher.nip,
-              teacherCode: teacher.code,
-              email: teacher.email,
-              piketDays: teacher.piketDays || a.piketDays,
+              name: cleanTeacher.name,
+              nip: cleanTeacher.nip,
+              teacherCode: cleanTeacher.code,
+              email: cleanTeacher.email,
+              piketDays: cleanTeacher.piketDays || a.piketDays,
             }
           : a
       )
@@ -2336,23 +2794,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Sinkronkan ke jadwal pelajaran
     updateSchedulesAndSync((prev) =>
       prev.map((s) =>
-        s.teacherId === teacher.id
-          ? { ...s, teacherName: teacher.name, teacherCode: teacher.code }
+        s.teacherId === cleanTeacher.id
+          ? { ...s, teacherName: cleanTeacher.name, teacherCode: cleanTeacher.code }
           : s
       )
     );
     // Sinkronkan ke wali kelas
     updateClassesAndSync((prev) =>
       prev.map((c) =>
-        c.homeroomTeacherId === teacher.id
-          ? { ...c, homeroomTeacherName: teacher.name }
+        c.homeroomTeacherId === cleanTeacher.id
+          ? { ...c, homeroomTeacherName: cleanTeacher.name }
           : c
       )
     );
+    const ok = await flushSyncQueue();
+    return {
+      success: ok,
+      error: ok ? undefined : (lastCloudSyncErrorRef.current || 'Gagal memperbarui data guru ke Cloud Firestore.'),
+    };
   };
 
-  const deleteTeacher = (id: string) => {
-    updateTeachersAndSync((prev) => prev.filter((t) => t.id !== id));
+  const deleteTeacher = async (id: string): Promise<{ success: boolean; error?: string }> => {
+    updateTeachersAndSync((prev) => prev.filter((t) => t.id !== id), { deleteIds: [id] });
     updateUserAccountsAndSync((prev) => prev.filter((a) => a.teacherId !== id));
     updateSchedulesAndSync((prev) =>
       prev.map((s) =>
@@ -2364,6 +2827,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         c.homeroomTeacherId === id ? { ...c, homeroomTeacherId: undefined, homeroomTeacherName: undefined } : c
       )
     );
+    const ok = await flushSyncQueue();
+    return {
+      success: ok,
+      error: ok ? undefined : (lastCloudSyncErrorRef.current || 'Gagal menghapus data guru dari Cloud Firestore.'),
+    };
   };
 
   const bulkDeleteTeachers = (ids: string[]) => {
@@ -2408,14 +2876,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const importTeachers = (newTeachers: Teacher[]) => {
-    updateTeachersAndSync((prev) => [...prev, ...newTeachers]);
+  const importTeachers = async (newTeachers: Teacher[]): Promise<{ success: boolean; error?: string }> => {
+    const cleanNew = stripUndefined(newTeachers);
+    updateTeachersAndSync((prev) => [...prev, ...cleanNew], { upserts: cleanNew });
     // Otomatis buat akun login guru untuk setiap guru yang baru diimpor agar langsung dapat login
     updateUserAccountsAndSync((prev) => {
       const existingByTeacherId = new Set(prev.map((a) => a.teacherId).filter(Boolean));
       const existingUsernames = new Set(prev.map((a) => a.username.toLowerCase()));
       const additions: UserAccount[] = [];
-      newTeachers.forEach((t) => {
+      cleanNew.forEach((t) => {
         if (existingByTeacherId.has(t.id)) return;
         let usernameCandidate = t.code ? t.code.toUpperCase() : `GURU_${t.id}`;
         if (existingUsernames.has(usernameCandidate.toLowerCase())) {
@@ -2443,7 +2912,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       return additions.length > 0 ? [...prev, ...additions] : prev;
     });
-    scheduleAutoCloudBackup('Setelah Impor Data Guru');
+    const ok = await flushSyncQueue();
+    if (ok) {
+      scheduleAutoCloudBackup('Setelah Impor Data Guru');
+    }
+    return {
+      success: ok,
+      error: ok ? undefined : (lastCloudSyncErrorRef.current || 'Gagal mengimpor data guru ke Cloud Firestore.'),
+    };
   };
 
   const addSubject = (subject: Subject) => updateSubjectsAndSync((prev) => [...prev, subject]);
@@ -2766,7 +3242,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return {
       success: ok,
       savedCount: cleanItems.length,
-      error: ok ? undefined : (cloudSyncError || 'Gagal menyimpan jadwal ke Cloud Firestore.'),
+      error: ok ? undefined : (lastCloudSyncErrorRef.current || cloudSyncError || 'Gagal menyimpan jadwal ke Cloud Firestore.'),
     };
   };
 
@@ -2843,6 +3319,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         explicitResetAt: now,
       };
 
+      resetAllPendingDeltas();
       teachersRef.current = [];
       subjectsRef.current = [];
       classesRef.current = [];
@@ -3171,6 +3648,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         committedStore = fullPayload;
       }
 
+      if (mode === 'full_snapshot') {
+        resetAllPendingDeltas();
+      } else {
+        pendingScheduleDeltaRef.current = createEmptyScheduleDelta();
+        inFlightScheduleDeltaRef.current = null;
+      }
       localMutationVersionRef.current += 1;
       lastLocalMutationAtRef.current = committedStore.lastUpdated || now;
       applyRemoteStore(committedStore);
@@ -3178,6 +3661,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastUpdated: committedStore.lastUpdated || now,
         skipBroadcast: false,
       });
+      lastCloudSyncErrorRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
 
@@ -3229,6 +3713,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     } catch (e) {}
 
+    resetAllPendingDeltas();
     teachersRef.current = [];
     subjectsRef.current = [];
     classesRef.current = [];
