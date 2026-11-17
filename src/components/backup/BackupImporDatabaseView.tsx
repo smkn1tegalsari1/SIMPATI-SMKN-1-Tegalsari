@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   HardDriveDownload,
   Upload,
@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Save,
   X,
+  Info,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -33,12 +34,30 @@ import {
   createSchedulesBackupEnvelope,
   downloadSchedulesExcel,
   estimateFirestorePayloadBytes,
+  FIRESTORE_FREE_QUOTA_LABEL,
+  FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+  formatQuotaPercentage,
+  formatStorageBytes,
   parseBackupJsonText,
   parseScheduleExcelBuffer,
   ParsedImportPayload,
   triggerDownloadJson,
 } from '../../data/databaseBackup';
 import { ScheduleWeekType } from '../../types';
+
+interface FirestoreStorageMetricsResponse {
+  success: boolean;
+  available: boolean;
+  source: 'google_cloud_monitoring' | 'unavailable';
+  metricType?: string;
+  projectId?: string;
+  databaseId?: string;
+  actualDatabaseBytes?: number;
+  measuredAt?: string;
+  quotaBytes: number;
+  quotaLabel: string;
+  reason?: string;
+}
 
 export const BackupImporDatabaseView: React.FC = () => {
   const {
@@ -56,11 +75,12 @@ export const BackupImporDatabaseView: React.FC = () => {
     monthlyWeekSchedules,
     currentUser,
     isCloudConnected,
+    isRetryingCloudSync,
     isServerConnected,
     cloudSyncError,
     hasCloudBackup,
     cloudBackupSummary,
-    refreshFromServer,
+    retryCloudSync,
     createCloudBackup,
     restoreFromCloudBackup,
     mergeImportedSchedulesAndData,
@@ -74,6 +94,8 @@ export const BackupImporDatabaseView: React.FC = () => {
   const [isBackingUpCloud, setIsBackingUpCloud] = useState(false);
   const [isRestoringCloud, setIsRestoringCloud] = useState(false);
   const [confirmRestoreCloud, setConfirmRestoreCloud] = useState(false);
+  const [storageMetrics, setStorageMetrics] = useState<FirestoreStorageMetricsResponse | null>(null);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
 
   // Filter Ekspor Khusus Jadwal
   const [exportWeekFilter, setExportWeekFilter] = useState<'ALL_ITEMS' | ScheduleWeekType>('ALL_ITEMS');
@@ -92,6 +114,41 @@ export const BackupImporDatabaseView: React.FC = () => {
   // Tabel Rincian Input Guru
   const [teacherSearch, setTeacherSearch] = useState('');
 
+  const fetchStorageMetrics = useCallback(async () => {
+    setIsLoadingMetrics(true);
+    try {
+      const res = await fetch('/api/firestore-storage-metrics');
+      if (res.ok) {
+        const json: FirestoreStorageMetricsResponse = await res.json();
+        setStorageMetrics(json);
+      } else {
+        setStorageMetrics({
+          success: false,
+          available: false,
+          source: 'unavailable',
+          quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+          quotaLabel: FIRESTORE_FREE_QUOTA_LABEL,
+          reason: `Endpoint metrik mengembalikan status HTTP ${res.status}.`,
+        });
+      }
+    } catch {
+      setStorageMetrics({
+        success: false,
+        available: false,
+        source: 'unavailable',
+        quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+        quotaLabel: FIRESTORE_FREE_QUOTA_LABEL,
+        reason: 'Tidak dapat menghubungi endpoint backend Google Cloud Monitoring.',
+      });
+    } finally {
+      setIsLoadingMetrics(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchStorageMetrics();
+  }, [fetchStorageMetrics]);
+
   const showToast = (type: 'success' | 'error' | 'info', message: string) => {
     setToast({ type, message });
     setTimeout(() => {
@@ -99,8 +156,8 @@ export const BackupImporDatabaseView: React.FC = () => {
     }, 6000);
   };
 
-  // Estimasi Ukuran Dokumen Firestore Saat Ini
-  const payloadBytes = useMemo(() => {
+  // Estimasi Ukuran Data Aplikasi (JSON) untuk Database Utama (main_store)
+  const mainStoreEstimatedBytes = useMemo(() => {
     return estimateFirestorePayloadBytes({
       teachers,
       subjects,
@@ -130,8 +187,25 @@ export const BackupImporDatabaseView: React.FC = () => {
     monthlyWeekSchedules,
   ]);
 
-  const payloadKb = Math.round(payloadBytes / 1024);
-  const capacityPct = Math.min(100, Math.round((payloadBytes / 950_000) * 100));
+  const backupStoreEstimatedBytes =
+    hasCloudBackup && typeof cloudBackupSummary?.estimatedBytes === 'number'
+      ? cloudBackupSummary.estimatedBytes
+      : 0;
+  const totalAppEstimatedBytes = mainStoreEstimatedBytes + backupStoreEstimatedBytes;
+
+  const quotaBytes = storageMetrics?.quotaBytes || FIRESTORE_FREE_STORAGE_QUOTA_BYTES;
+  const quotaLabel = storageMetrics?.quotaLabel || FIRESTORE_FREE_QUOTA_LABEL;
+  const hasActualFirestoreSize =
+    Boolean(storageMetrics?.available) &&
+    typeof storageMetrics?.actualDatabaseBytes === 'number' &&
+    Number.isFinite(storageMetrics.actualDatabaseBytes);
+  const referenceUsedBytes = hasActualFirestoreSize
+    ? (storageMetrics!.actualDatabaseBytes as number)
+    : totalAppEstimatedBytes;
+  const quotaUsage = useMemo(
+    () => formatQuotaPercentage(referenceUsedBytes, quotaBytes),
+    [referenceUsedBytes, quotaBytes]
+  );
 
   // Rincian Jadwal per Guru di database aktif saat ini
   const currentTeacherBreakdown = useMemo(() => {
@@ -294,6 +368,7 @@ export const BackupImporDatabaseView: React.FC = () => {
         showToast(res.success ? 'success' : 'error', res.message);
         if (res.success) {
           setParsedImport(null);
+          void fetchStorageMetrics();
         }
       } else {
         if (!confirmFullRestoreCheck) {
@@ -325,10 +400,26 @@ export const BackupImporDatabaseView: React.FC = () => {
         if (res.success) {
           setParsedImport(null);
           setConfirmFullRestoreCheck(false);
+          void fetchStorageMetrics();
         }
       }
     } finally {
       setIsApplyingImport(false);
+    }
+  };
+
+  const formatIsoTimestamp = (iso?: string) => {
+    if (!iso) return '-';
+    try {
+      return new Date(iso).toLocaleString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return '-';
     }
   };
 
@@ -404,66 +495,161 @@ export const BackupImporDatabaseView: React.FC = () => {
 
           <button
             type="button"
-            disabled={isRefreshing}
+            disabled={isRefreshing || isRetryingCloudSync}
             onClick={async () => {
               setIsRefreshing(true);
-              await refreshFromServer();
+              const [ok] = await Promise.all([retryCloudSync(), fetchStorageMetrics()]);
               setIsRefreshing(false);
-              showToast('info', 'Data terbaru berhasil disinkronkan dari Cloud Firestore.');
+              if (ok) {
+                showToast('success', 'Data terbaru berhasil disinkronkan dan terhubung ke Cloud Firestore!');
+              } else {
+                showToast(
+                  'error',
+                  cloudSyncError || 'Belum dapat terhubung ke Cloud Firestore. Data sementara diambil dari server lokal.'
+                );
+              }
             }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-bold text-white transition cursor-pointer disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing ? 'Menyinkronkan...' : 'Segarkan dari Cloud'}</span>
+            <RefreshCw className={`w-4 h-4 ${isRefreshing || isRetryingCloudSync ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing || isRetryingCloudSync ? 'Menyinkronkan...' : 'Segarkan dari Cloud'}</span>
           </button>
         </div>
 
         {/* Capacity & Cloud Backup Status Bar */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-white/10 text-xs">
-          {/* Kapasitas Dokumen Firestore */}
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/15 space-y-2">
-            <div className="flex items-center justify-between">
+          {/* Panel 1: Kuota Firestore (1 GiB), Ukuran Aktual Cloud Monitoring, & Estimasi Data Aplikasi */}
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/15 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-bold text-slate-200 flex items-center gap-1.5">
                 <Database className="w-4 h-4 text-cyan-300" />
-                Kapasitas Penyimpanan Cloud (main_store)
+                Kuota & Penyimpanan Cloud Firestore
               </span>
               <span className="font-extrabold tabular-nums text-amber-300">
-                {payloadKb} KB / 950 KB ({capacityPct}%)
+                {formatStorageBytes(referenceUsedBytes)} / {quotaLabel} ({quotaUsage.formatted})
               </span>
             </div>
+
             <div className="w-full h-2.5 bg-slate-900/60 rounded-full overflow-hidden border border-white/10">
               <div
                 className={`h-full rounded-full transition-all ${
-                  capacityPct >= 85 ? 'bg-rose-500' : capacityPct >= 65 ? 'bg-amber-400' : 'bg-emerald-400'
+                  quotaUsage.percent >= 85
+                    ? 'bg-rose-500'
+                    : quotaUsage.percent >= 65
+                    ? 'bg-amber-400'
+                    : 'bg-emerald-400'
                 }`}
-                style={{ width: `${Math.max(4, capacityPct)}%` }}
+                style={{ width: `${Math.max(2, quotaUsage.barWidthPct)}%` }}
               />
             </div>
-            <p className="text-[11px] text-slate-300">
-              {currentTeacherBreakdown.length} guru telah memiliki total <strong>{schedules.length}</strong> slot jadwal tersimpan di Cloud.
-            </p>
-          </div>
 
-          {/* Status Cadangan Cloud (main_store_backup) */}
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/15 flex flex-col justify-between gap-3">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <span className="font-bold text-slate-200 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-300" />
-                  Cadangan Otomatis Cloud (main_store_backup)
-                </span>
-                {hasCloudBackup && cloudBackupSummary ? (
-                  <p className="text-[11px] text-emerald-200 mt-1">
-                    Tersimpan: <strong>{formatTimestamp(cloudBackupSummary.backedUpAt)}</strong> ·{' '}
-                    {cloudBackupSummary.teachersCount} guru, {cloudBackupSummary.classesCount} kelas,{' '}
-                    <strong>{cloudBackupSummary.schedulesCount} jadwal</strong>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-xl bg-slate-950/35 border border-white/10 px-3 py-2 space-y-0.5">
+                <p className="text-slate-300 font-semibold">Ukuran Aktual Firestore</p>
+                {isLoadingMetrics ? (
+                  <p className="text-cyan-200 font-bold">Memuat Cloud Monitoring...</p>
+                ) : hasActualFirestoreSize ? (
+                  <p className="text-emerald-300 font-extrabold tabular-nums">
+                    {formatStorageBytes(storageMetrics!.actualDatabaseBytes!)}{' '}
+                    <span className="font-normal text-slate-300">
+                      (Monitoring · {formatIsoTimestamp(storageMetrics?.measuredAt)})
+                    </span>
                   </p>
                 ) : (
-                  <p className="text-[11px] text-amber-200 mt-1">
-                    Belum ada snapshot cadangan di dokumen <code>main_store_backup</code>. Klik tombol di bawah untuk membuat sekarang.
+                  <p className="text-amber-200 font-semibold leading-snug">
+                    Belum tersedia di runtime ini
                   </p>
                 )}
               </div>
+
+              <div className="rounded-xl bg-slate-950/35 border border-white/10 px-3 py-2 space-y-0.5">
+                <p className="text-slate-300 font-semibold">Kuota Penyimpanan Gratis</p>
+                <p className="text-white font-extrabold tabular-nums">
+                  {quotaLabel}{' '}
+                  <span className="font-normal text-slate-300">(database paket gratis)</span>
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-slate-950/35 border border-white/10 px-3 py-2 space-y-0.5">
+                <p className="text-slate-300 font-semibold">Estimasi Data Utama (main_store)</p>
+                <p className="text-cyan-200 font-extrabold tabular-nums">
+                  {formatStorageBytes(mainStoreEstimatedBytes)}{' '}
+                  <span className="font-normal text-slate-300">(JSON aplikasi)</span>
+                </p>
+              </div>
+
+              <div className="rounded-xl bg-slate-950/35 border border-white/10 px-3 py-2 space-y-0.5">
+                <p className="text-slate-300 font-semibold">Estimasi Cadangan (main_store_backup)</p>
+                <p className="text-emerald-200 font-extrabold tabular-nums">
+                  {hasCloudBackup
+                    ? backupStoreEstimatedBytes > 0
+                      ? formatStorageBytes(backupStoreEstimatedBytes)
+                      : 'Tersedia'
+                    : 'Belum ada cadangan'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 text-[11px] text-slate-300 leading-relaxed bg-slate-950/30 rounded-xl px-3 py-2 border border-white/10">
+              <Info className="w-3.5 h-3.5 text-cyan-300 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p>
+                  {hasActualFirestoreSize
+                    ? 'Indikator kuota memakai ukuran aktual database dari Google Cloud Monitoring.'
+                    : `Indikator kuota memakai total estimasi data aplikasi (${formatStorageBytes(
+                        totalAppEstimatedBytes
+                      )}) terhadap kuota ${quotaLabel}.`}{' '}
+                  Angka <strong>estimasi ukuran data aplikasi (JSON)</strong> dapat berbeda dengan{' '}
+                  <strong>ukuran aktual database Firestore</strong> karena Firestore memperhitungkan{' '}
+                  <strong>metadata dan indeks</strong>.
+                </p>
+                {!hasActualFirestoreSize && storageMetrics?.reason && !isLoadingMetrics && (
+                  <p className="text-slate-400">{storageMetrics.reason}</p>
+                )}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-300">
+              {currentTeacherBreakdown.length} guru telah memiliki total <strong>{schedules.length}</strong> slot
+              jadwal aktif di database utama.
+            </p>
+          </div>
+
+          {/* Panel 2: Status Database Cadangan Cloud (main_store_backup) */}
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/15 flex flex-col justify-between gap-3">
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                  Database Cadangan Cloud (main_store_backup)
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-400/30 tabular-nums">
+                  {hasCloudBackup
+                    ? backupStoreEstimatedBytes > 0
+                      ? `Estimasi: ${formatStorageBytes(backupStoreEstimatedBytes)}`
+                      : 'Snapshot Tersedia'
+                    : 'Kosong'}
+                </span>
+              </div>
+
+              {hasCloudBackup && cloudBackupSummary ? (
+                <div className="rounded-xl bg-slate-950/35 border border-white/10 p-3 space-y-1 text-[11px] text-emerald-100">
+                  <p>
+                    Terakhir dicadangkan: <strong>{formatTimestamp(cloudBackupSummary.backedUpAt)}</strong>
+                    {cloudBackupSummary.backedUpBy ? ` · oleh ${cloudBackupSummary.backedUpBy}` : ''}
+                  </p>
+                  <p className="text-slate-200">
+                    Isi cadangan: <strong>{cloudBackupSummary.teachersCount}</strong> guru ·{' '}
+                    <strong>{cloudBackupSummary.classesCount}</strong> kelas ·{' '}
+                    <strong>{cloudBackupSummary.schedulesCount}</strong> jadwal
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-amber-200 leading-relaxed">
+                  Belum ada snapshot cadangan di dokumen <code>main_store_backup</code>. Klik tombol di bawah untuk
+                  menyimpan cadangan terpisah dari database utama.
+                </p>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -474,6 +660,9 @@ export const BackupImporDatabaseView: React.FC = () => {
                   setIsBackingUpCloud(true);
                   const ok = await createCloudBackup('Cadangan Manual Menu Backup Database');
                   setIsBackingUpCloud(false);
+                  if (ok) {
+                    void fetchStorageMetrics();
+                  }
                   showToast(
                     ok ? 'success' : 'error',
                     ok
@@ -509,6 +698,9 @@ export const BackupImporDatabaseView: React.FC = () => {
                       const res = await restoreFromCloudBackup();
                       setIsRestoringCloud(false);
                       setConfirmRestoreCloud(false);
+                      if (res.success) {
+                        void fetchStorageMetrics();
+                      }
                       showToast(res.success ? 'success' : 'error', res.message);
                     }}
                     className="px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-bold text-[11px] cursor-pointer"
@@ -558,12 +750,29 @@ export const BackupImporDatabaseView: React.FC = () => {
 
       {/* Peringatan Cloud Error */}
       {cloudSyncError && (
-        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-center gap-3 text-xs text-rose-800">
-          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-          <div>
-            <p className="font-bold">Gangguan Sinkronisasi Cloud Firestore terdeteksi:</p>
-            <p className="mt-0.5">{cloudSyncError}</p>
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+            <div>
+              <p className="font-bold">Gangguan Sinkronisasi Cloud Firestore terdeteksi:</p>
+              <p className="mt-0.5">{cloudSyncError}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            disabled={isRetryingCloudSync}
+            onClick={async () => {
+              const [ok] = await Promise.all([retryCloudSync(), fetchStorageMetrics()]);
+              showToast(
+                ok ? 'success' : 'error',
+                ok ? 'Koneksi Cloud Firestore berhasil dipulihkan!' : 'Masih belum dapat terhubung ke Cloud Firestore.'
+              );
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRetryingCloudSync ? 'animate-spin' : ''}`} />
+            <span>{isRetryingCloudSync ? 'Menyambungkan...' : 'Coba Hubungkan Ulang'}</span>
+          </button>
         </div>
       )}
 

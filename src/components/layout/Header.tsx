@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Clock, Shield, User, UserCheck, Crown, CalendarDays, Sparkles, LogOut, Radio, KeyRound } from 'lucide-react';
+import { Clock, Shield, User, UserCheck, Crown, CalendarDays, Sparkles, LogOut, Radio, KeyRound, RefreshCw } from 'lucide-react';
 import { PERIOD_TIMES } from '../../data/initialData';
 import { UserRole } from '../../types';
 import { EditAkunModal } from '../auth/EditAkunModal';
@@ -24,7 +24,9 @@ export const Header: React.FC<HeaderProps> = () => {
     getWeekTypeShortLabel,
     isServerConnected,
     isCloudConnected,
+    isRetryingCloudSync,
     cloudSyncError,
+    retryCloudSync,
     logout,
   } = useApp();
 
@@ -122,44 +124,59 @@ export const Header: React.FC<HeaderProps> = () => {
           </div>
         </div>
 
-        {/* Cloud & Server Sync Indicator */}
-        <div
-          className={`hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+        {/* Cloud & Server Sync Indicator (Klik untuk sinkronkan ulang bila terputus/error) */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!isRetryingCloudSync) {
+              void retryCloudSync();
+            }
+          }}
+          disabled={isRetryingCloudSync}
+          className={`${cloudSyncError ? 'inline-flex' : 'hidden md:inline-flex'} items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer disabled:opacity-70 ${
             cloudSyncError
-              ? 'bg-rose-50 text-rose-800 border-rose-300'
+              ? 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300'
               : isCloudConnected
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-              : 'bg-amber-50 text-amber-800 border-amber-300'
+              ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+              : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300'
           }`}
           title={
-            cloudSyncError
-              ? `Sinkronisasi Cloud Firestore bermasalah: ${cloudSyncError}`
+            isRetryingCloudSync
+              ? 'Sedang mencoba menyambungkan ulang ke Cloud Firestore...'
+              : cloudSyncError
+              ? `Gangguan Cloud Firestore: ${cloudSyncError} (Klik untuk coba hubungkan ulang)`
               : isCloudConnected
-              ? 'Tersambung ke Cloud Firestore terpusat & server real-time. Semua perubahan tersimpan aman di online.'
+              ? 'Tersambung ke Cloud Firestore terpusat & server real-time. Klik untuk menyegarkan koneksi.'
               : isServerConnected
-              ? 'Terhubung ke server lokal, sedang menyambungkan ke Cloud Firestore...'
+              ? 'Terhubung ke server lokal, sedang menyambungkan ke Cloud Firestore... (Klik untuk coba ulang)'
               : 'Menghubungkan ke database Cloud Firestore...'
           }
         >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              cloudSyncError
-                ? 'bg-rose-500'
-                : isCloudConnected
-                ? 'bg-emerald-500 animate-pulse'
-                : 'bg-amber-500'
-            }`}
-          />
+          {isRetryingCloudSync ? (
+            <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
+          ) : (
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                cloudSyncError
+                  ? 'bg-rose-500'
+                  : isCloudConnected
+                  ? 'bg-emerald-500 animate-pulse'
+                  : 'bg-amber-500'
+              }`}
+            />
+          )}
           <span>
-            {cloudSyncError
-              ? 'Cloud Error'
+            {isRetryingCloudSync
+              ? 'Menyambungkan...'
+              : cloudSyncError
+              ? 'Cloud Error · Coba Lagi'
               : isCloudConnected
               ? 'Cloud Aktif'
               : isServerConnected
               ? 'Server Lokal'
               : 'Menghubungkan...'}
           </span>
-        </div>
+        </button>
 
         {/* Current Active User Profile Badge & Edit Account Button */}
         <div className="flex items-center gap-1.5 pl-2 border-l border-slate-200">

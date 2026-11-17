@@ -133,9 +133,11 @@ export const DataMasterView: React.FC = () => {
     importClassSchedules,
     resetAllData,
     isCloudConnected,
+    isRetryingCloudSync,
     cloudSyncError,
     hasCloudBackup,
     cloudBackupSummary,
+    retryCloudSync,
     createCloudBackup,
     restoreFromCloudBackup,
     setActiveMenu,
@@ -1175,13 +1177,22 @@ export const DataMasterView: React.FC = () => {
 
       {/* Peringatan Sync Cloud / Status Cadangan Otomatis */}
       {cloudSyncError && (
-        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs text-rose-800">
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800">
           <div className="flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
             <span>
-              <strong>Peringatan Sinkronisasi Cloud:</strong> {cloudSyncError}. Pastikan ukuran data tidak melebihi batas dokumen Cloud atau koneksi internet stabil.
+              <strong>Peringatan Sinkronisasi Cloud:</strong> {cloudSyncError}
             </span>
           </div>
+          <button
+            type="button"
+            disabled={isRetryingCloudSync}
+            onClick={() => void retryCloudSync()}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${isRetryingCloudSync ? 'animate-spin' : ''}`} />
+            <span>{isRetryingCloudSync ? 'Menyambungkan...' : 'Coba Hubungkan Ulang'}</span>
+          </button>
         </div>
       )}
 

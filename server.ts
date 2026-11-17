@@ -142,6 +142,142 @@ async function startServer() {
     });
   });
 
+  // 2b. Endpoint GET /api/firestore-storage-metrics: Ambil ukuran aktual penyimpanan Firestore via Google Cloud Monitoring
+  app.get('/api/firestore-storage-metrics', async (req, res) => {
+    const FIRESTORE_FREE_STORAGE_QUOTA_BYTES = 1024 * 1024 * 1024; // 1 GiB
+    let projectId = '';
+    let databaseId = '(default)';
+
+    try {
+      const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+        projectId = cfg.projectId || '';
+        databaseId = cfg.firestoreDatabaseId || '(default)';
+      }
+    } catch {
+      // Abaikan jika gagal membaca konfigurasi
+    }
+
+    if (!projectId) {
+      return res.json({
+        success: true,
+        available: false,
+        source: 'unavailable',
+        projectId: '',
+        databaseId,
+        quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+        quotaLabel: '1 GiB',
+        reason: 'ID proyek Firebase belum terkonfigurasi.',
+      });
+    }
+
+    try {
+      let accessToken = process.env.GCP_MONITORING_ACCESS_TOKEN || '';
+      if (!accessToken) {
+        const tokRes = await fetch(
+          'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+          {
+            headers: { 'Metadata-Flavor': 'Google' },
+            signal: AbortSignal.timeout(2000),
+          }
+        );
+        if (tokRes.ok) {
+          const tokJson: any = await tokRes.json();
+          accessToken = tokJson?.access_token || '';
+        }
+      }
+
+      if (!accessToken) {
+        return res.json({
+          success: true,
+          available: false,
+          source: 'unavailable',
+          projectId,
+          databaseId,
+          quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+          quotaLabel: '1 GiB',
+          reason: 'Token kredensial Google Cloud Monitoring tidak tersedia pada runtime ini.',
+        });
+      }
+
+      const endIso = new Date().toISOString();
+      const startIso = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+      const monitoringUrl =
+        `https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(projectId)}/timeSeries` +
+        `?filter=${encodeURIComponent('metric.type="firestore.googleapis.com/storage/data_and_index_size"')}` +
+        `&interval.startTime=${encodeURIComponent(startIso)}` +
+        `&interval.endTime=${encodeURIComponent(endIso)}`;
+
+      const monRes = await fetch(monitoringUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(4000),
+      });
+
+      if (!monRes.ok) {
+        const statusCode = monRes.status;
+        return res.json({
+          success: true,
+          available: false,
+          source: 'unavailable',
+          projectId,
+          databaseId,
+          quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+          quotaLabel: '1 GiB',
+          reason:
+            statusCode === 403 || statusCode === 401
+              ? `Akses Google Cloud Monitoring (roles/monitoring.viewer) pada proyek "${projectId}" belum diberikan untuk runtime server ini.`
+              : `Google Cloud Monitoring mengembalikan status ${statusCode}.`,
+        });
+      }
+
+      const monData: any = await monRes.json();
+      const seriesList: any[] = Array.isArray(monData?.timeSeries) ? monData.timeSeries : [];
+      const matchingSeries =
+        seriesList.find((s) => s?.resource?.labels?.database_id === databaseId) || seriesList[0];
+      const latestPoint = matchingSeries?.points?.[0];
+      const rawVal = latestPoint?.value?.int64Value ?? latestPoint?.value?.doubleValue;
+      const actualDatabaseBytes = rawVal !== undefined ? Number(rawVal) : null;
+
+      if (actualDatabaseBytes === null || !Number.isFinite(actualDatabaseBytes)) {
+        return res.json({
+          success: true,
+          available: false,
+          source: 'unavailable',
+          projectId,
+          databaseId,
+          quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+          quotaLabel: '1 GiB',
+          reason: 'Data time-series ukuran penyimpanan Firestore belum tercatat oleh Google Cloud Monitoring.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        available: true,
+        source: 'google_cloud_monitoring',
+        metricType: 'firestore.googleapis.com/storage/data_and_index_size',
+        projectId,
+        databaseId,
+        actualDatabaseBytes,
+        measuredAt: latestPoint?.interval?.endTime || endIso,
+        quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+        quotaLabel: '1 GiB',
+      });
+    } catch (err: any) {
+      return res.json({
+        success: true,
+        available: false,
+        source: 'unavailable',
+        projectId,
+        databaseId,
+        quotaBytes: FIRESTORE_FREE_STORAGE_QUOTA_BYTES,
+        quotaLabel: '1 GiB',
+        reason: err?.message || 'Tidak dapat menghubungi Google Cloud Monitoring API.',
+      });
+    }
+  });
+
   // 3. Endpoint POST /api/sync: Simpan pembaruan data dari admin atau hidrasi Cloud Firestore
   app.post('/api/sync', (req, res) => {
     try {

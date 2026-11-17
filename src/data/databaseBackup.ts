@@ -175,12 +175,66 @@ export function formatWeekTypeDisplay(weekType?: string): string {
   return 'ALL';
 }
 
+export const FIRESTORE_FREE_STORAGE_QUOTA_BYTES = 1024 * 1024 * 1024; // 1 GiB (1.073.741.824 byte)
+export const FIRESTORE_FREE_QUOTA_LABEL = '1 GiB';
+
 export function estimateFirestorePayloadBytes(payload: Record<string, any>): number {
   try {
     return new TextEncoder().encode(JSON.stringify(payload)).length;
   } catch {
     return 0;
   }
+}
+
+export function formatStorageBytes(bytes: number): string {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
+    return '0 KB';
+  }
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} B`;
+  }
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${kb >= 100 ? Math.round(kb) : Number(kb.toFixed(1))} KB`;
+  }
+  const mb = kb / 1024;
+  if (mb < 1024) {
+    return `${mb >= 100 ? mb.toFixed(1) : mb.toFixed(2)} MB`;
+  }
+  const gb = mb / 1024;
+  return `${gb >= 10 ? gb.toFixed(1) : gb.toFixed(2)} GB`;
+}
+
+export function formatQuotaPercentage(
+  usedBytes: number,
+  quotaBytes: number = FIRESTORE_FREE_STORAGE_QUOTA_BYTES
+): {
+  percent: number;
+  formatted: string;
+  barWidthPct: number;
+} {
+  if (
+    typeof usedBytes !== 'number' ||
+    !Number.isFinite(usedBytes) ||
+    usedBytes <= 0 ||
+    !Number.isFinite(quotaBytes) ||
+    quotaBytes <= 0
+  ) {
+    return { percent: 0, formatted: '0%', barWidthPct: 0 };
+  }
+  const percent = (usedBytes / quotaBytes) * 100;
+  let formatted: string;
+  if (percent < 0.01) {
+    formatted = '< 0,01%';
+  } else if (percent < 1) {
+    formatted = `${percent.toFixed(2).replace('.', ',')}%`;
+  } else if (percent < 10) {
+    formatted = `${percent.toFixed(1).replace('.', ',')}%`;
+  } else {
+    formatted = `${Math.round(percent)}%`;
+  }
+  const barWidthPct = Math.min(100, Math.max(2, percent));
+  return { percent, formatted, barWidthPct };
 }
 
 export function computePerTeacherScheduleBreakdown(

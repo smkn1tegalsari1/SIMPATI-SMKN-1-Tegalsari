@@ -51,7 +51,13 @@ import {
   SEED_SCHEDULES,
 } from '../data/masterSeedData';
 import { doc, getDoc, getDocFromServer, setDoc, onSnapshot, runTransaction } from 'firebase/firestore';
-import { db, testFirestoreConnection, OperationType, handleFirestoreError } from '../lib/firebase';
+import {
+  db,
+  checkFirestoreConnection,
+  classifyFirestoreError,
+  OperationType,
+  handleFirestoreError,
+} from '../lib/firebase';
 import {
   hasMeaningfulSchoolData,
   pickAuthoritativeStore,
@@ -111,6 +117,7 @@ interface AppContextType {
   isAuthenticated: boolean;
   isServerConnected: boolean;
   isCloudConnected: boolean;
+  isRetryingCloudSync: boolean;
   cloudSyncError: string | null;
   hasCloudBackup: boolean;
   cloudBackupSummary: {
@@ -119,6 +126,7 @@ interface AppContextType {
     teachersCount: number;
     classesCount: number;
     schedulesCount: number;
+    estimatedBytes?: number;
   } | null;
   logout: () => void;
   activeMenu: ActiveMenu;
@@ -240,7 +248,8 @@ interface AppContextType {
   deleteJournal: (id: string) => void;
 
   // Sinkronisasi Database Terpusat
-  refreshFromServer: () => Promise<void>;
+  refreshFromServer: () => Promise<{ success: boolean; cloudConnected: boolean; error?: string }>;
+  retryCloudSync: () => Promise<boolean>;
   seedDatabaseFromPreset: () => Promise<boolean>;
   createCloudBackup: (reason?: string) => Promise<boolean>;
   restoreFromCloudBackup: () => Promise<{ success: boolean; message: string }>;
@@ -349,15 +358,30 @@ export const getScheduleLessonStatus = (
 
 const STORAGE_KEY = 'simpati_smkn1tegalsari_v3';
 
-// Rekursif hapus properti undefined agar Firestore setDoc tidak pernah gagal
+// Rekursif bersihkan properti undefined, elemen array undefined, dan angka non-finite agar Firestore setDoc/tx.set tidak pernah gagal
 function stripUndefined<T>(val: T): T {
+  if (typeof val === 'number') {
+    return (Number.isFinite(val) ? val : 0) as unknown as T;
+  }
+  if (val instanceof Date) {
+    return val.toISOString() as unknown as T;
+  }
   if (Array.isArray(val)) {
-    return val.map((item) => stripUndefined(item)) as unknown as T;
+    return val
+      .filter((item) => item !== undefined && typeof item !== 'function' && typeof item !== 'symbol')
+      .map((item) => stripUndefined(item)) as unknown as T;
   }
   if (val !== null && typeof val === 'object') {
     const cleaned: Record<string, any> = {};
     for (const [k, v] of Object.entries(val as Record<string, any>)) {
-      if (v !== undefined) {
+      if (
+        v !== undefined &&
+        typeof v !== 'function' &&
+        typeof v !== 'symbol' &&
+        k !== '__proto__' &&
+        k !== 'constructor' &&
+        k !== 'prototype'
+      ) {
         cleaned[k] = stripUndefined(v);
       }
     }
@@ -531,6 +555,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [clientId] = useState<string>(() => `client_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`);
   const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
   const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+  const [isRetryingCloudSync, setIsRetryingCloudSync] = useState<boolean>(false);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
   const [hasCloudBackup, setHasCloudBackup] = useState<boolean>(false);
   const [cloudBackupSummary, setCloudBackupSummary] = useState<{
@@ -539,6 +564,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     teachersCount: number;
     classesCount: number;
     schedulesCount: number;
+    estimatedBytes?: number;
   } | null>(null);
   const isRemoteUpdatingRef = React.useRef<boolean>(false);
   const isInitialMount = React.useRef<boolean>(true);
@@ -628,6 +654,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const autoBackupTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeWeekFilterRef = React.useRef<'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('AUTO');
   const lastCloudSyncErrorRef = React.useRef<string | null>(null);
+  const flushRetryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushRetryAttemptRef = React.useRef<number>(0);
+  const snapshotRetryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const snapshotRetryAttemptRef = React.useRef<number>(0);
+  const resubscribeFirestoreRef = React.useRef<(() => void) | null>(null);
 
   const resetAllPendingDeltas = () => {
     pendingServerPatchRef.current = {};
@@ -771,6 +802,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const hasPendingCloudMutations = (): boolean => {
+    return (
+      hasScheduleDeltaChanges(pendingScheduleDeltaRef.current) ||
+      hasJournalDeltaChanges(pendingJournalDeltaRef.current) ||
+      hasAttendanceDeltaChanges(pendingAttendanceDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingTeacherDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingUserAccountDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingSubjectDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingClassDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingDepartmentDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingRoomDeltaRef.current) ||
+      hasEntityDeltaChanges(pendingAcademicYearDeltaRef.current) ||
+      Object.keys(pendingCloudPatchRef.current).length > 0
+    );
+  };
+
+  const clearScheduledFlushRetry = () => {
+    if (flushRetryTimerRef.current) {
+      clearTimeout(flushRetryTimerRef.current);
+      flushRetryTimerRef.current = null;
+    }
+    flushRetryAttemptRef.current = 0;
+  };
+
+  const scheduleAutoFlushRetry = () => {
+    if (flushRetryTimerRef.current) return;
+    if (flushRetryAttemptRef.current >= 5) return;
+    const delayMs = Math.min(30_000, 4000 * Math.pow(2, flushRetryAttemptRef.current));
+    flushRetryAttemptRef.current += 1;
+    flushRetryTimerRef.current = setTimeout(() => {
+      flushRetryTimerRef.current = null;
+      if (hasPendingCloudMutations() && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        void flushSyncQueue();
+      }
+    }, delayMs);
+  };
+
   const scheduleAutoCloudBackup = (reason: string) => {
     if (autoBackupTimerRef.current) {
       clearTimeout(autoBackupTimerRef.current);
@@ -778,17 +846,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     autoBackupTimerRef.current = setTimeout(() => {
       autoBackupTimerRef.current = null;
       const now = Date.now();
-      if (now - lastAutoBackupAtRef.current < 25_000) {
+      if (now - lastAutoBackupAtRef.current < 120_000) {
         return;
       }
       lastAutoBackupAtRef.current = now;
       void createCloudBackup(reason);
-    }, 2500);
+    }, 3000);
   };
 
   const flushSyncQueue = async (): Promise<boolean> => {
-    // Jika ada flush lain sedang berjalan, tunggu selesai lalu flush sisa pending baru
-    if (activeFlushPromiseRef.current) {
+    // Pastikan flush berjalan satu per satu secara berurutan agar transaksi tidak saling balapan
+    while (activeFlushPromiseRef.current) {
       await activeFlushPromiseRef.current;
     }
 
@@ -895,110 +963,138 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         try {
           const mainStoreRef = doc(db, 'simpati_data', 'main_store');
-          const committed = await runTransaction(db, async (tx) => {
-            const snap = await tx.get(mainStoreRef);
-            const remoteData = snap.exists() ? snap.data() : {};
-            const remoteTs = typeof remoteData.lastUpdated === 'number' ? remoteData.lastUpdated : 0;
-            const safeTs = Math.max(mutationTs, remoteTs + 1);
+          const executeCloudTransaction = async () => {
+            return await runTransaction(db, async (tx) => {
+              const snap = await tx.get(mainStoreRef);
+              const remoteData = snap.exists() ? snap.data() : {};
+              const remoteTs = typeof remoteData.lastUpdated === 'number' ? remoteData.lastUpdated : 0;
+              const safeTs = Math.max(mutationTs, remoteTs + 1);
 
-            const txPayload: Record<string, any> = {
-              ...cloudPatch,
-              lastUpdated: safeTs,
-              lastUpdatedBy: updatedByName,
-              lastUpdatedByClientId: clientId,
-              isInitialEmpty: false,
-            };
+              const txPayload: Record<string, any> = {
+                ...cloudPatch,
+                lastUpdated: safeTs,
+                lastUpdatedBy: updatedByName,
+                lastUpdatedByClientId: clientId,
+                isInitialEmpty: false,
+              };
 
-            let mergedTeachers: Teacher[] | undefined;
-            if (hasTeacherDelta) {
-              const remoteTeachers = Array.isArray(remoteData.teachers) ? remoteData.teachers : [];
-              mergedTeachers = stripUndefined(mergeEntitiesWithDelta(remoteTeachers, teacherDelta));
-              txPayload.teachers = mergedTeachers;
+              let mergedTeachers: Teacher[] | undefined;
+              if (hasTeacherDelta) {
+                const remoteTeachers = Array.isArray(remoteData.teachers) ? remoteData.teachers : [];
+                mergedTeachers = stripUndefined(mergeEntitiesWithDelta(remoteTeachers, teacherDelta));
+                txPayload.teachers = mergedTeachers;
+              }
+
+              let mergedUserAccounts: UserAccount[] | undefined;
+              if (hasUserAccountDelta) {
+                const remoteAccounts = Array.isArray(remoteData.userAccounts) ? remoteData.userAccounts : [];
+                mergedUserAccounts = stripUndefined(
+                  ensureDefaultAccounts(mergeEntitiesWithDelta(remoteAccounts, userAccountDelta))
+                );
+                txPayload.userAccounts = mergedUserAccounts;
+              }
+
+              let mergedSubjects: Subject[] | undefined;
+              if (hasSubjectDelta) {
+                const remoteSubjects = Array.isArray(remoteData.subjects) ? remoteData.subjects : [];
+                mergedSubjects = stripUndefined(mergeEntitiesWithDelta(remoteSubjects, subjectDelta));
+                txPayload.subjects = mergedSubjects;
+              }
+
+              let mergedClasses: SchoolClass[] | undefined;
+              if (hasClassDelta) {
+                const remoteClasses = Array.isArray(remoteData.classes) ? remoteData.classes : [];
+                mergedClasses = stripUndefined(mergeEntitiesWithDelta(remoteClasses, classDelta));
+                txPayload.classes = mergedClasses;
+              }
+
+              let mergedDepartments: Department[] | undefined;
+              if (hasDepartmentDelta) {
+                const remoteDepartments = Array.isArray(remoteData.departments) ? remoteData.departments : [];
+                mergedDepartments = stripUndefined(mergeEntitiesWithDelta(remoteDepartments, departmentDelta));
+                txPayload.departments = mergedDepartments;
+              }
+
+              let mergedRooms: Room[] | undefined;
+              if (hasRoomDelta) {
+                const remoteRooms = Array.isArray(remoteData.rooms) ? remoteData.rooms : [];
+                mergedRooms = stripUndefined(mergeEntitiesWithDelta(remoteRooms, roomDelta));
+                txPayload.rooms = mergedRooms;
+              }
+
+              let mergedAcademicYears: AcademicYear[] | undefined;
+              if (hasAcademicYearDelta) {
+                const remoteAcademicYears = Array.isArray(remoteData.academicYears) ? remoteData.academicYears : [];
+                mergedAcademicYears = stripUndefined(mergeEntitiesWithDelta(remoteAcademicYears, academicYearDelta));
+                txPayload.academicYears = mergedAcademicYears;
+              }
+
+              let mergedSchedules: ScheduleItem[] | undefined;
+              if (hasScheduleDelta) {
+                const remoteSchedules = Array.isArray(remoteData.schedules) ? remoteData.schedules : [];
+                mergedSchedules = stripUndefined(mergeSchedulesWithDelta(remoteSchedules, scheduleDelta));
+                txPayload.schedules = mergedSchedules;
+              }
+
+              let mergedJournals: TeachingJournal[] | undefined;
+              if (hasJournalDelta) {
+                const remoteJournals = Array.isArray(remoteData.journals) ? remoteData.journals : [];
+                mergedJournals = stripUndefined(mergeJournalsWithDelta(remoteJournals, journalDelta));
+                txPayload.journals = mergedJournals;
+              }
+
+              let mergedAttendance: Record<string, AttendanceRecord> | undefined;
+              if (hasAttendanceDelta) {
+                const remoteAtt =
+                  remoteData.attendanceRecords && typeof remoteData.attendanceRecords === 'object'
+                    ? remoteData.attendanceRecords
+                    : {};
+                mergedAttendance = stripUndefined(mergeAttendanceWithDelta(remoteAtt, attendanceDelta));
+                txPayload.attendanceRecords = mergedAttendance;
+              }
+
+              const cleanTxPayload = stripUndefined(txPayload);
+              tx.set(mainStoreRef, cleanTxPayload, { merge: true });
+              return {
+                mergedTeachers,
+                mergedUserAccounts,
+                mergedSubjects,
+                mergedClasses,
+                mergedDepartments,
+                mergedRooms,
+                mergedAcademicYears,
+                mergedSchedules,
+                mergedJournals,
+                mergedAttendance,
+                safeTs,
+              };
+            });
+          };
+
+          let committed: Awaited<ReturnType<typeof executeCloudTransaction>> | undefined;
+          let lastTxError: unknown = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              committed = await executeCloudTransaction();
+              lastTxError = null;
+              break;
+            } catch (txErr) {
+              lastTxError = txErr;
+              const classified = classifyFirestoreError(txErr);
+              const canImmediateRetry =
+                attempt < 2 &&
+                (classified.category === 'contention' || classified.category === 'offline') &&
+                (typeof navigator === 'undefined' || navigator.onLine !== false);
+              if (!canImmediateRetry) {
+                throw txErr;
+              }
+              const jitterMs = 220 * (attempt + 1) + Math.floor(Math.random() * 220);
+              await new Promise((r) => setTimeout(r, jitterMs));
             }
-
-            let mergedUserAccounts: UserAccount[] | undefined;
-            if (hasUserAccountDelta) {
-              const remoteAccounts = Array.isArray(remoteData.userAccounts) ? remoteData.userAccounts : [];
-              mergedUserAccounts = stripUndefined(
-                ensureDefaultAccounts(mergeEntitiesWithDelta(remoteAccounts, userAccountDelta))
-              );
-              txPayload.userAccounts = mergedUserAccounts;
-            }
-
-            let mergedSubjects: Subject[] | undefined;
-            if (hasSubjectDelta) {
-              const remoteSubjects = Array.isArray(remoteData.subjects) ? remoteData.subjects : [];
-              mergedSubjects = stripUndefined(mergeEntitiesWithDelta(remoteSubjects, subjectDelta));
-              txPayload.subjects = mergedSubjects;
-            }
-
-            let mergedClasses: SchoolClass[] | undefined;
-            if (hasClassDelta) {
-              const remoteClasses = Array.isArray(remoteData.classes) ? remoteData.classes : [];
-              mergedClasses = stripUndefined(mergeEntitiesWithDelta(remoteClasses, classDelta));
-              txPayload.classes = mergedClasses;
-            }
-
-            let mergedDepartments: Department[] | undefined;
-            if (hasDepartmentDelta) {
-              const remoteDepartments = Array.isArray(remoteData.departments) ? remoteData.departments : [];
-              mergedDepartments = stripUndefined(mergeEntitiesWithDelta(remoteDepartments, departmentDelta));
-              txPayload.departments = mergedDepartments;
-            }
-
-            let mergedRooms: Room[] | undefined;
-            if (hasRoomDelta) {
-              const remoteRooms = Array.isArray(remoteData.rooms) ? remoteData.rooms : [];
-              mergedRooms = stripUndefined(mergeEntitiesWithDelta(remoteRooms, roomDelta));
-              txPayload.rooms = mergedRooms;
-            }
-
-            let mergedAcademicYears: AcademicYear[] | undefined;
-            if (hasAcademicYearDelta) {
-              const remoteAcademicYears = Array.isArray(remoteData.academicYears) ? remoteData.academicYears : [];
-              mergedAcademicYears = stripUndefined(mergeEntitiesWithDelta(remoteAcademicYears, academicYearDelta));
-              txPayload.academicYears = mergedAcademicYears;
-            }
-
-            let mergedSchedules: ScheduleItem[] | undefined;
-            if (hasScheduleDelta) {
-              const remoteSchedules = Array.isArray(remoteData.schedules) ? remoteData.schedules : [];
-              mergedSchedules = stripUndefined(mergeSchedulesWithDelta(remoteSchedules, scheduleDelta));
-              txPayload.schedules = mergedSchedules;
-            }
-
-            let mergedJournals: TeachingJournal[] | undefined;
-            if (hasJournalDelta) {
-              const remoteJournals = Array.isArray(remoteData.journals) ? remoteData.journals : [];
-              mergedJournals = stripUndefined(mergeJournalsWithDelta(remoteJournals, journalDelta));
-              txPayload.journals = mergedJournals;
-            }
-
-            let mergedAttendance: Record<string, AttendanceRecord> | undefined;
-            if (hasAttendanceDelta) {
-              const remoteAtt =
-                remoteData.attendanceRecords && typeof remoteData.attendanceRecords === 'object'
-                  ? remoteData.attendanceRecords
-                  : {};
-              mergedAttendance = stripUndefined(mergeAttendanceWithDelta(remoteAtt, attendanceDelta));
-              txPayload.attendanceRecords = mergedAttendance;
-            }
-
-            tx.set(mainStoreRef, stripUndefined(txPayload), { merge: true });
-            return {
-              mergedTeachers,
-              mergedUserAccounts,
-              mergedSubjects,
-              mergedClasses,
-              mergedDepartments,
-              mergedRooms,
-              mergedAcademicYears,
-              mergedSchedules,
-              mergedJournals,
-              mergedAttendance,
-              safeTs,
-            };
-          });
+          }
+          if (!committed) {
+            throw lastTxError || new Error('Gagal melakukan transaksi ke Cloud Firestore.');
+          }
 
           const serverSyncFullState: Record<string, any> = { ...serverPatch, ...cloudPatch };
 
@@ -1107,6 +1203,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // Sinkronkan server lokal dengan hasil transaksi gabungan dan tunggu selesai agar konsisten saat refresh
           await postServerSync(stripUndefined(serverSyncFullState), committed.safeTs);
 
+          clearScheduledFlushRetry();
           lastCloudSyncErrorRef.current = null;
           setIsCloudConnected(true);
           setCloudSyncError(null);
@@ -1157,10 +1254,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
 
           handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
-          const msg = err?.message || 'Gagal menyimpan ke Cloud Firestore';
-          lastCloudSyncErrorRef.current = msg;
-          setIsCloudConnected(false);
-          setCloudSyncError(msg);
+          const classified = classifyFirestoreError(err);
+          lastCloudSyncErrorRef.current = classified.message;
+          if (classified.category === 'offline' || classified.category === 'quota' || classified.category === 'permission') {
+            setIsCloudConnected(false);
+          }
+          setCloudSyncError(classified.message);
+          if (classified.isTransient) {
+            scheduleAutoFlushRetry();
+          }
           return false;
         } finally {
           inFlightCloudFlushCountRef.current = Math.max(0, inFlightCloudFlushCountRef.current - 1);
@@ -1287,10 +1389,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const approxBytes = new TextEncoder().encode(JSON.stringify(snapshotPayload)).length;
-      if (approxBytes > 950_000) {
-        console.warn('[SIMPATI Cloud Backup] Ukuran snapshot mendekati batas dokumen Firestore:', approxBytes);
-        return false;
-      }
 
       await setDoc(doc(db, 'simpati_data', 'main_store_backup'), snapshotPayload);
       setHasCloudBackup(true);
@@ -1300,6 +1398,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         teachersCount: snapshotPayload.teachers.length,
         classesCount: snapshotPayload.classes.length,
         schedulesCount: snapshotPayload.schedules.length,
+        estimatedBytes: approxBytes,
       });
       return true;
     } catch (err) {
@@ -1884,26 +1983,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Fungsi sinkronisasi manual/otomatis langsung dari database cloud Firestore dan server terpusat
-  const refreshFromServer = async () => {
+  const refreshFromServer = async (): Promise<{
+    success: boolean;
+    cloudConnected: boolean;
+    error?: string;
+  }> => {
     const startVersion = localMutationVersionRef.current;
     let cloudData: Record<string, any> | null = null;
     let serverData: Record<string, any> | null = null;
+    let cloudConnectedNow = false;
+    let cloudErrorMsg: string | undefined;
 
-    const readMainCloudDoc = async () => {
+    const readMainCloudFromServer = async () => {
+      return await getDocFromServer(doc(db, 'simpati_data', 'main_store'));
+    };
+
+    const readBackupCloud = async () => {
       try {
-        return await getDocFromServer(doc(db, 'simpati_data', 'main_store'));
+        return await getDocFromServer(doc(db, 'simpati_data', 'main_store_backup'));
       } catch {
-        return await getDoc(doc(db, 'simpati_data', 'main_store'));
+        return await getDoc(doc(db, 'simpati_data', 'main_store_backup'));
       }
     };
 
     const [cloudRes, serverRes, backupRes] = await Promise.allSettled([
-      readMainCloudDoc(),
+      readMainCloudFromServer(),
       fetch('/api/state').then((r) => r.json()),
-      getDoc(doc(db, 'simpati_data', 'main_store_backup')),
+      readBackupCloud(),
     ]);
 
     if (cloudRes.status === 'fulfilled') {
+      cloudConnectedNow = true;
       if (cloudRes.value.exists()) {
         cloudData = cloudRes.value.data();
       }
@@ -1911,7 +2021,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsCloudConnected(true);
       setCloudSyncError(null);
     } else {
+      const classified = classifyFirestoreError(cloudRes.reason);
+      cloudErrorMsg = classified.message;
+      lastCloudSyncErrorRef.current = classified.message;
       setIsCloudConnected(false);
+      setCloudSyncError(classified.message);
+
+      // Baca cache lokal Firestore hanya sebagai data tampilan sementara bila belum ada data sama sekali
+      try {
+        const cachedSnap = await getDoc(doc(db, 'simpati_data', 'main_store'));
+        if (cachedSnap.exists()) {
+          cloudData = cachedSnap.data();
+        }
+      } catch {
+        // Abaikan jika cache juga belum tersedia
+      }
     }
 
     if (serverRes.status === 'fulfilled' && serverRes.value?.success && serverRes.value?.data) {
@@ -1922,6 +2046,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (backupRes.status === 'fulfilled' && backupRes.value.exists()) {
       const b = backupRes.value.data();
       if (hasMeaningfulSchoolData(b)) {
+        let estimatedBackupBytes = 0;
+        try {
+          estimatedBackupBytes = new TextEncoder().encode(JSON.stringify(b)).length;
+        } catch {}
         setHasCloudBackup(true);
         setCloudBackupSummary({
           backedUpAt: b.backedUpAt,
@@ -1929,12 +2057,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           teachersCount: Array.isArray(b.teachers) ? b.teachers.length : 0,
           classesCount: Array.isArray(b.classes) ? b.classes.length : 0,
           schedulesCount: Array.isArray(b.schedules) ? b.schedules.length : 0,
+          estimatedBytes: estimatedBackupBytes,
         });
       }
     }
 
     if (localMutationVersionRef.current !== startVersion) {
-      return;
+      return {
+        success: cloudConnectedNow,
+        cloudConnected: cloudConnectedNow,
+        error: cloudErrorMsg,
+      };
     }
 
     const decision = pickAuthoritativeStore({ cloudData, serverData });
@@ -1950,17 +2083,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         });
       }
 
-      // Hanya unggah server -> Cloud jika Cloud benar-benar kosong sedangkan server lokal punya data nyata
-      if (decision.syncCloudFromServer && serverData && !hasMeaningfulSchoolData(cloudData)) {
+      // Hanya unggah server -> Cloud jika Cloud benar-benar terhubung & kosong sedangkan server lokal punya data nyata
+      if (cloudConnectedNow && decision.syncCloudFromServer && serverData && !hasMeaningfulSchoolData(cloudData)) {
         syncToCloud(stripUndefined(serverData));
       }
+    }
+
+    // Jika Cloud baru pulih dan masih ada perubahan lokal yang belum terkirim, segera kirim sekarang
+    if (cloudConnectedNow && hasPendingCloudMutations()) {
+      scheduleSyncFlush();
+    }
+
+    return {
+      success: cloudConnectedNow || !!serverData,
+      cloudConnected: cloudConnectedNow,
+      error: cloudErrorMsg,
+    };
+  };
+
+  // Fungsi pemulihan manual/otomatis penuh: hidupkan ulang listener real-time, muat server, dan kirim antrean pending
+  const retryCloudSync = async (): Promise<boolean> => {
+    setIsRetryingCloudSync(true);
+    try {
+      clearScheduledFlushRetry();
+      if (snapshotRetryTimerRef.current) {
+        clearTimeout(snapshotRetryTimerRef.current);
+        snapshotRetryTimerRef.current = null;
+      }
+      snapshotRetryAttemptRef.current = 0;
+
+      if (resubscribeFirestoreRef.current) {
+        resubscribeFirestoreRef.current();
+      }
+
+      const refreshRes = await refreshFromServer();
+      let flushOk = true;
+      if (hasPendingCloudMutations()) {
+        flushOk = await flushSyncQueue();
+      }
+      return refreshRes.cloudConnected && flushOk;
+    } finally {
+      setIsRetryingCloudSync(false);
     }
   };
 
   // Fungsi sinkronisasi eksplisit / seed data master monitoring ke Cloud Firestore terpusat
   const seedDatabaseFromPreset = async (): Promise<boolean> => {
     try {
-      const payload = {
+      const payload = stripUndefined({
         teachers: SEED_TEACHERS,
         subjects: SEED_SUBJECTS,
         classes: SEED_CLASSES,
@@ -1975,7 +2145,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastUpdated: Date.now(),
         lastUpdatedBy: currentUser.name || 'Admin SIMPATI',
         isInitialEmpty: false,
-      };
+      });
 
       teachersRef.current = SEED_TEACHERS;
       subjectsRef.current = SEED_SUBJECTS;
@@ -2002,102 +2172,169 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       syncToServer('fullState', payload);
       await setDoc(doc(db, 'simpati_data', 'main_store'), payload);
+      lastCloudSyncErrorRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
       return true;
     } catch (err: any) {
-      console.error('[SIMPATI Cloud] Gagal seed database dari preset:', err);
-      setCloudSyncError(err?.message || 'Gagal seed database ke Cloud Firestore');
+      handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+      const classified = classifyFirestoreError(err);
+      lastCloudSyncErrorRef.current = classified.message;
+      setIsCloudConnected(false);
+      setCloudSyncError(classified.message);
       return false;
     }
   };
 
-  // Hubungkan ke Cloud Firestore Terpusat & Server Lokal: Dengarkan pembaruan real-time di semua perangkat
+  // Hubungkan ke Cloud Firestore Terpusat & Server Lokal: Dengarkan pembaruan real-time dengan auto-reconnect
   useEffect(() => {
     let isMounted = true;
+    let activeUnsubscribe: (() => void) | null = null;
 
-    testFirestoreConnection().then((ok) => {
-      if (isMounted) setIsCloudConnected(ok);
+    checkFirestoreConnection().then((res) => {
+      if (!isMounted) return;
+      setIsCloudConnected(res.ok);
+      if (!res.ok && res.error) {
+        lastCloudSyncErrorRef.current = res.error.message;
+        setCloudSyncError(res.error.message);
+      }
     });
 
-    // 1. Dengarkan database Cloud Firestore secara real-time ke dokumen bersama
-    const unsubscribeFirestore = onSnapshot(
-      doc(db, 'simpati_data', 'main_store'),
-      async (snapshot) => {
-        if (!isMounted) return;
-        if (snapshot.exists()) {
-          const s = snapshot.data();
+    const attachFirestoreListener = () => {
+      if (!isMounted) return;
+      if (activeUnsubscribe) {
+        try {
+          activeUnsubscribe();
+        } catch {}
+        activeUnsubscribe = null;
+      }
 
-          // Abaikan hanya jika ini echo pending milik klien ini sendiri yang transaksinya masih berjalan
-          if (
-            s.lastUpdatedByClientId === clientId &&
-            (snapshot.metadata.hasPendingWrites || inFlightCloudFlushCountRef.current > 0)
-          ) {
-            return;
+      activeUnsubscribe = onSnapshot(
+        doc(db, 'simpati_data', 'main_store'),
+        async (snapshot) => {
+          if (!isMounted) return;
+
+          snapshotRetryAttemptRef.current = 0;
+          if (snapshotRetryTimerRef.current) {
+            clearTimeout(snapshotRetryTimerRef.current);
+            snapshotRetryTimerRef.current = null;
           }
 
-          applyRemoteStore(s);
-          setIsCloudConnected(true);
-          setCloudSyncError(null);
-          setIsServerConnected(true);
-        } else {
-          // Jangan langsung menimpa jika snapshot berasal dari cache kosong! Verifikasi langsung ke server Firestore
-          try {
-            const serverSnap = await getDocFromServer(doc(db, 'simpati_data', 'main_store'));
-            if (!isMounted) return;
-            if (serverSnap.exists()) {
-              applyRemoteStore(serverSnap.data());
+          if (snapshot.exists()) {
+            const s = snapshot.data();
+
+            // Abaikan hanya jika ini echo pending milik klien ini sendiri yang transaksinya masih berjalan
+            if (
+              s.lastUpdatedByClientId === clientId &&
+              (snapshot.metadata.hasPendingWrites || inFlightCloudFlushCountRef.current > 0)
+            ) {
+              return;
+            }
+
+            applyRemoteStore(s);
+            if (!snapshot.metadata.fromCache) {
+              lastCloudSyncErrorRef.current = null;
               setIsCloudConnected(true);
               setCloudSyncError(null);
-              return;
+              if (hasPendingCloudMutations()) {
+                scheduleSyncFlush();
+              }
             }
+            setIsServerConnected(true);
+          } else {
+            // Jangan langsung menimpa jika snapshot berasal dari cache kosong! Verifikasi langsung ke server Firestore
+            try {
+              const serverSnap = await getDocFromServer(doc(db, 'simpati_data', 'main_store'));
+              if (!isMounted) return;
+              if (serverSnap.exists()) {
+                applyRemoteStore(serverSnap.data());
+                lastCloudSyncErrorRef.current = null;
+                setIsCloudConnected(true);
+                setCloudSyncError(null);
+                return;
+              }
 
-            const alreadyHasLocalData = hasMeaningfulSchoolData({
-              teachers: teachersRef.current,
-              subjects: subjectsRef.current,
-              classes: classesRef.current,
-              departments: departmentsRef.current,
-              rooms: roomsRef.current,
-              schedules: schedulesRef.current,
-              journals: journalsRef.current,
-            });
-            if (alreadyHasLocalData) {
-              return;
+              const alreadyHasLocalData = hasMeaningfulSchoolData({
+                teachers: teachersRef.current,
+                subjects: subjectsRef.current,
+                classes: classesRef.current,
+                departments: departmentsRef.current,
+                rooms: roomsRef.current,
+                schedules: schedulesRef.current,
+                journals: journalsRef.current,
+              });
+              if (alreadyHasLocalData) {
+                return;
+              }
+
+              const initialStore = stripUndefined({
+                teachers: [],
+                subjects: [],
+                classes: [],
+                departments: [],
+                rooms: [],
+                academicYears: INITIAL_ACADEMIC_YEARS,
+                schedules: [],
+                attendanceRecords: {},
+                userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
+                journals: [],
+                activeWeekFilter: 'AUTO',
+                monthlyWeekSchedules: {},
+                lastUpdated: 0,
+                lastUpdatedBy: 'System Fresh Init',
+                isInitialEmpty: true,
+              });
+              await setDoc(doc(db, 'simpati_data', 'main_store'), initialStore, { merge: true });
+              lastCloudSyncErrorRef.current = null;
+              setIsCloudConnected(true);
+              setCloudSyncError(null);
+            } catch (seedErr) {
+              console.warn('[SIMPATI Cloud] Verifikasi/inisialisasi cloud store awal:', seedErr);
             }
+          }
+        },
+        (err) => {
+          if (!isMounted) return;
+          handleFirestoreError(err, OperationType.GET, 'simpati_data/main_store');
+          const classified = classifyFirestoreError(err);
+          lastCloudSyncErrorRef.current = classified.message;
+          setIsCloudConnected(false);
+          setCloudSyncError(classified.message);
 
-            const initialStore = {
-              teachers: [],
-              subjects: [],
-              classes: [],
-              departments: [],
-              rooms: [],
-              academicYears: INITIAL_ACADEMIC_YEARS,
-              schedules: [],
-              attendanceRecords: {},
-              userAccounts: ensureDefaultAccounts(INITIAL_USER_ACCOUNTS),
-              journals: [],
-              activeWeekFilter: 'AUTO',
-              monthlyWeekSchedules: {},
-              lastUpdated: 0,
-              lastUpdatedBy: 'System Fresh Init',
-              isInitialEmpty: true,
-            };
-            await setDoc(doc(db, 'simpati_data', 'main_store'), initialStore, { merge: true });
-            setIsCloudConnected(true);
-          } catch (seedErr) {
-            console.warn('[SIMPATI Cloud] Verifikasi/inisialisasi cloud store awal:', seedErr);
+          // Firestore menghentikan listener saat error; daftarkan ulang otomatis untuk gangguan sementara
+          if (classified.isTransient && !snapshotRetryTimerRef.current) {
+            const delayMs = Math.min(30_000, 3000 * Math.pow(2, snapshotRetryAttemptRef.current));
+            snapshotRetryAttemptRef.current += 1;
+            snapshotRetryTimerRef.current = setTimeout(() => {
+              snapshotRetryTimerRef.current = null;
+              if (isMounted) {
+                attachFirestoreListener();
+                void refreshFromServer();
+              }
+            }, delayMs);
           }
         }
-      },
-      (err) => {
-        console.warn('[SIMPATI Cloud] Firestore listener error, fallback aktif:', err);
-        setIsCloudConnected(false);
-        setCloudSyncError(err?.message || 'Koneksi real-time Firestore terputus');
-      }
-    );
+      );
+    };
+
+    resubscribeFirestoreRef.current = attachFirestoreListener;
+    attachFirestoreListener();
 
     // 2. Panggil refresh awal dan dengarkan server SSE lokal
-    refreshFromServer();
+    void refreshFromServer();
+
+    const handleOnline = () => {
+      if (!isMounted) return;
+      void retryCloudSync();
+    };
+    const handleVisibilityChange = () => {
+      if (!isMounted || document.visibilityState !== 'visible') return;
+      if (lastCloudSyncErrorRef.current || hasPendingCloudMutations()) {
+        void retryCloudSync();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     let eventSource: EventSource | null = null;
     try {
@@ -2204,7 +2441,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return () => {
       isMounted = false;
-      unsubscribeFirestore();
+      resubscribeFirestoreRef.current = null;
+      if (activeUnsubscribe) activeUnsubscribe();
+      if (snapshotRetryTimerRef.current) {
+        clearTimeout(snapshotRetryTimerRef.current);
+        snapshotRetryTimerRef.current = null;
+      }
+      if (flushRetryTimerRef.current) {
+        clearTimeout(flushRetryTimerRef.current);
+        flushRetryTimerRef.current = null;
+      }
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (eventSource) eventSource.close();
     };
   }, [clientId]);
@@ -3368,8 +3616,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ type: 'empty', clientId, updatedBy: currentUser.name || 'Admin' }),
       }).catch(() => {});
 
-      setDoc(doc(db, 'simpati_data', 'main_store'), cleanPayload).catch((err) => {
-        console.warn('[SIMPATI Cloud] Gagal membersihkan database cloud:', err);
+      setDoc(doc(db, 'simpati_data', 'main_store'), stripUndefined(cleanPayload)).catch((err) => {
+        handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+        const classified = classifyFirestoreError(err);
+        lastCloudSyncErrorRef.current = classified.message;
+        setCloudSyncError(classified.message);
       });
     }
   };
@@ -3551,6 +3802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastUpdated: txResult.safeTs,
         skipBroadcast: false,
       });
+      lastCloudSyncErrorRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
       scheduleAutoCloudBackup('Setelah Impor Gabung Database');
@@ -3565,7 +3817,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: `Impor gabung berhasil! +${txResult.scheduleMerge.addedItems.length} jadwal baru ditambahkan, ${txResult.scheduleMerge.updatedItems.length} diperbarui (${txResult.scheduleMerge.duplicateSkippedCount} sama/dilewati). Total jadwal sekarang: ${txResult.scheduleMerge.totalResult}.`,
       };
     } catch (err: any) {
-      setCloudSyncError(err?.message || 'Gagal menggabungkan database ke Cloud Firestore');
+      handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+      const classified = classifyFirestoreError(err);
+      lastCloudSyncErrorRef.current = classified.message;
+      setCloudSyncError(classified.message);
       return {
         success: false,
         addedSchedules: 0,
@@ -3573,7 +3828,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         skippedSchedules: 0,
         addedMasterCount: 0,
         addedJournals: 0,
-        message: `Gagal mengimpor/menggabungkan database: ${err?.message || 'Kesalahan jaringan Cloud Firestore'}`,
+        message: `Gagal mengimpor/menggabungkan database: ${classified.message}`,
       };
     }
   };
@@ -3673,10 +3928,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : `Berhasil memulihkan database lengkap (${committedStore.teachers?.length || 0} guru, ${committedStore.classes?.length || 0} kelas, ${committedStore.schedules?.length || 0} jadwal, ${committedStore.journals?.length || 0} jurnal) ke Cloud Firestore!`,
       };
     } catch (err: any) {
-      setCloudSyncError(err?.message || 'Gagal memulihkan snapshot backup');
+      handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+      const classified = classifyFirestoreError(err);
+      lastCloudSyncErrorRef.current = classified.message;
+      setCloudSyncError(classified.message);
       return {
         success: false,
-        message: `Gagal memulihkan backup ke Cloud: ${err?.message || 'Kesalahan jaringan'}`,
+        message: `Gagal memulihkan backup ke Cloud: ${classified.message}`,
       };
     }
   };
@@ -3759,8 +4017,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {}
 
     try {
-      await setDoc(doc(db, 'simpati_data', 'main_store'), freshPayload);
-    } catch (e) {}
+      await setDoc(doc(db, 'simpati_data', 'main_store'), stripUndefined(freshPayload));
+      lastCloudSyncErrorRef.current = null;
+      setIsCloudConnected(true);
+      setCloudSyncError(null);
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
+      const classified = classifyFirestoreError(err);
+      lastCloudSyncErrorRef.current = classified.message;
+      setCloudSyncError(classified.message);
+    }
   };
 
   // Helper status jadwal di dalam provider
@@ -3819,6 +4085,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isAuthenticated,
         isServerConnected,
         isCloudConnected,
+        isRetryingCloudSync,
         cloudSyncError,
         hasCloudBackup,
         cloudBackupSummary,
@@ -3911,6 +4178,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateJournal,
         deleteJournal,
         refreshFromServer,
+        retryCloudSync,
         seedDatabaseFromPreset,
         createCloudBackup,
         restoreFromCloudBackup,
