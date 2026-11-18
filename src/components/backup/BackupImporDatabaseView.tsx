@@ -43,6 +43,7 @@ import {
   ParsedImportPayload,
   triggerDownloadJson,
 } from '../../data/databaseBackup';
+import { FIRESTORE_CONSOLE_UPGRADE_URL, FIRESTORE_PRICING_URL } from '../../lib/firebase';
 import { ScheduleWeekType } from '../../types';
 
 interface FirestoreStorageMetricsResponse {
@@ -78,9 +79,11 @@ export const BackupImporDatabaseView: React.FC = () => {
     isRetryingCloudSync,
     isServerConnected,
     cloudSyncError,
+    cloudSyncErrorCategory,
     hasCloudBackup,
     cloudBackupSummary,
     retryCloudSync,
+    loadCloudBackupSummary,
     createCloudBackup,
     restoreFromCloudBackup,
     mergeImportedSchedulesAndData,
@@ -147,6 +150,7 @@ export const BackupImporDatabaseView: React.FC = () => {
 
   useEffect(() => {
     void fetchStorageMetrics();
+    void loadCloudBackupSummary();
   }, [fetchStorageMetrics]);
 
   const showToast = (type: 'success' | 'error' | 'info', message: string) => {
@@ -751,11 +755,32 @@ export const BackupImporDatabaseView: React.FC = () => {
       {/* Peringatan Cloud Error */}
       {cloudSyncError && (
         <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
-            <div>
+          <div className="flex items-start gap-3 max-w-3xl">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
               <p className="font-bold">Gangguan Sinkronisasi Cloud Firestore terdeteksi:</p>
-              <p className="mt-0.5">{cloudSyncError}</p>
+              <p>{cloudSyncError}</p>
+              {cloudSyncErrorCategory === 'quota' && (
+                <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold pt-0.5">
+                  <a
+                    href={FIRESTORE_CONSOLE_UPGRADE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-rose-900 hover:text-rose-950 font-bold"
+                  >
+                    Tingkatkan Database di Firebase Console
+                  </a>
+                  <span className="text-rose-400">·</span>
+                  <a
+                    href={FIRESTORE_PRICING_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-rose-700 hover:text-rose-900"
+                  >
+                    Info Kuota Paket Spark (Enterprise)
+                  </a>
+                </div>
+              )}
             </div>
           </div>
           <button

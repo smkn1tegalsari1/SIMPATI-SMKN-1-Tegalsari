@@ -64,6 +64,7 @@ import { BulkImportModal } from './BulkImportModal';
 import { ScheduleImportModal } from './ScheduleImportModal';
 import { BulkDeleteMasterModal } from './BulkDeleteMasterModal';
 import { BulkEditMasterModal } from './BulkEditMasterModal';
+import { FIRESTORE_CONSOLE_UPGRADE_URL, FIRESTORE_PRICING_URL } from '../../lib/firebase';
 
 export const DataMasterView: React.FC = () => {
   const {
@@ -135,6 +136,7 @@ export const DataMasterView: React.FC = () => {
     isCloudConnected,
     isRetryingCloudSync,
     cloudSyncError,
+    cloudSyncErrorCategory,
     hasCloudBackup,
     cloudBackupSummary,
     retryCloudSync,
@@ -1178,11 +1180,34 @@ export const DataMasterView: React.FC = () => {
       {/* Peringatan Sync Cloud / Status Cadangan Otomatis */}
       {cloudSyncError && (
         <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-800">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>
-              <strong>Peringatan Sinkronisasi Cloud:</strong> {cloudSyncError}
-            </span>
+          <div className="flex items-start gap-2 max-w-3xl">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p>
+                <strong>Peringatan Sinkronisasi Cloud:</strong> {cloudSyncError}
+              </p>
+              {cloudSyncErrorCategory === 'quota' && (
+                <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold">
+                  <a
+                    href={FIRESTORE_CONSOLE_UPGRADE_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-rose-900 hover:text-rose-950 font-bold"
+                  >
+                    Tingkatkan Database di Firebase Console
+                  </a>
+                  <span className="text-rose-400">·</span>
+                  <a
+                    href={FIRESTORE_PRICING_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-rose-700 hover:text-rose-900"
+                  >
+                    Info Kuota Paket Spark (Enterprise)
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
           <button
             type="button"

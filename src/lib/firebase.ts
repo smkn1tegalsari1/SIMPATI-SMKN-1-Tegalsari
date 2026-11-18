@@ -7,6 +7,9 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
 
+export const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
+export const FIRESTORE_CONSOLE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
+
 // Inisialisasi Firestore dengan ignoreUndefinedProperties dan experimentalAutoDetectLongPolling
 // agar koneksi stabil di jaringan sekolah, proxy, iFrame, maupun seluler
 let firestoreInstance: Firestore;

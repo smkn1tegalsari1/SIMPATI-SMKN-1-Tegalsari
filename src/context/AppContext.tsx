@@ -55,6 +55,7 @@ import {
   db,
   checkFirestoreConnection,
   classifyFirestoreError,
+  CloudErrorCategory,
   OperationType,
   handleFirestoreError,
 } from '../lib/firebase';
@@ -119,6 +120,7 @@ interface AppContextType {
   isCloudConnected: boolean;
   isRetryingCloudSync: boolean;
   cloudSyncError: string | null;
+  cloudSyncErrorCategory: CloudErrorCategory | null;
   hasCloudBackup: boolean;
   cloudBackupSummary: {
     backedUpAt?: number;
@@ -248,8 +250,12 @@ interface AppContextType {
   deleteJournal: (id: string) => void;
 
   // Sinkronisasi Database Terpusat
-  refreshFromServer: () => Promise<{ success: boolean; cloudConnected: boolean; error?: string }>;
+  refreshFromServer: (options?: {
+    skipCloudRead?: boolean;
+    includeBackupSummary?: boolean;
+  }) => Promise<{ success: boolean; cloudConnected: boolean; error?: string }>;
   retryCloudSync: () => Promise<boolean>;
+  loadCloudBackupSummary: () => Promise<void>;
   seedDatabaseFromPreset: () => Promise<boolean>;
   createCloudBackup: (reason?: string) => Promise<boolean>;
   restoreFromCloudBackup: () => Promise<{ success: boolean; message: string }>;
@@ -557,6 +563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
   const [isRetryingCloudSync, setIsRetryingCloudSync] = useState<boolean>(false);
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+  const [cloudSyncErrorCategory, setCloudSyncErrorCategory] = useState<CloudErrorCategory | null>(null);
   const [hasCloudBackup, setHasCloudBackup] = useState<boolean>(false);
   const [cloudBackupSummary, setCloudBackupSummary] = useState<{
     backedUpAt?: number;
@@ -654,6 +661,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const autoBackupTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeWeekFilterRef = React.useRef<'AUTO' | 'P10_PROD_P11_NORM' | 'P10_NORM_P11_PROD' | 'ALL'>('AUTO');
   const lastCloudSyncErrorRef = React.useRef<string | null>(null);
+  const lastCloudErrorCategoryRef = React.useRef<CloudErrorCategory | null>(null);
   const flushRetryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushRetryAttemptRef = React.useRef<number>(0);
   const snapshotRetryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -840,13 +848,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const scheduleAutoCloudBackup = (reason: string) => {
+    if (lastCloudErrorCategoryRef.current === 'quota') {
+      return;
+    }
     if (autoBackupTimerRef.current) {
       clearTimeout(autoBackupTimerRef.current);
     }
     autoBackupTimerRef.current = setTimeout(() => {
       autoBackupTimerRef.current = null;
+      if (lastCloudErrorCategoryRef.current === 'quota') {
+        return;
+      }
       const now = Date.now();
-      if (now - lastAutoBackupAtRef.current < 120_000) {
+      // Jeda minimal 5 menit agar tidak memboroskan kuota tulis dokumen besar main_store_backup
+      if (now - lastAutoBackupAtRef.current < 300_000) {
         return;
       }
       lastAutoBackupAtRef.current = now;
@@ -1205,8 +1220,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
           clearScheduledFlushRetry();
           lastCloudSyncErrorRef.current = null;
+          lastCloudErrorCategoryRef.current = null;
           setIsCloudConnected(true);
           setCloudSyncError(null);
+          setCloudSyncErrorCategory(null);
           if (hasScheduleDelta || hasJournalDelta) {
             scheduleAutoCloudBackup(
               hasScheduleDelta ? 'Cadangan Otomatis Perubahan Jadwal' : 'Cadangan Otomatis Perubahan Jurnal'
@@ -1256,10 +1273,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
           const classified = classifyFirestoreError(err);
           lastCloudSyncErrorRef.current = classified.message;
+          lastCloudErrorCategoryRef.current = classified.category;
           if (classified.category === 'offline' || classified.category === 'quota' || classified.category === 'permission') {
             setIsCloudConnected(false);
           }
           setCloudSyncError(classified.message);
+          setCloudSyncErrorCategory(classified.category);
           if (classified.isTransient) {
             scheduleAutoFlushRetry();
           }
@@ -1455,8 +1474,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       applyRemoteStore(restoredStore);
       await setDoc(doc(db, 'simpati_data', 'main_store'), restoredStore);
       await syncToServer('fullState', restoredStore, { lastUpdated: now, skipBroadcast: false });
+      lastCloudSyncErrorRef.current = null;
+      lastCloudErrorCategoryRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
+      setCloudSyncErrorCategory(null);
 
       return {
         success: true,
@@ -1982,13 +2004,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Fungsi sinkronisasi manual/otomatis langsung dari database cloud Firestore dan server terpusat
-  const refreshFromServer = async (): Promise<{
+  // Baca ringkasan cadangan cloud (main_store_backup) hanya saat dibutuhkan (menu Backup/refresh manual)
+  const loadCloudBackupSummary = async (): Promise<void> => {
+    try {
+      let backupSnap;
+      try {
+        backupSnap = await getDocFromServer(doc(db, 'simpati_data', 'main_store_backup'));
+      } catch {
+        backupSnap = await getDoc(doc(db, 'simpati_data', 'main_store_backup'));
+      }
+      if (backupSnap.exists()) {
+        const b = backupSnap.data();
+        if (hasMeaningfulSchoolData(b)) {
+          let estimatedBackupBytes = 0;
+          try {
+            estimatedBackupBytes = new TextEncoder().encode(JSON.stringify(b)).length;
+          } catch {}
+          setHasCloudBackup(true);
+          setCloudBackupSummary({
+            backedUpAt: b.backedUpAt,
+            backedUpBy: b.backedUpBy,
+            teachersCount: Array.isArray(b.teachers) ? b.teachers.length : 0,
+            classesCount: Array.isArray(b.classes) ? b.classes.length : 0,
+            schedulesCount: Array.isArray(b.schedules) ? b.schedules.length : 0,
+            estimatedBytes: estimatedBackupBytes,
+          });
+        }
+      }
+    } catch {
+      // Abaikan bila kuota habis atau offline
+    }
+  };
+
+  // Fungsi sinkronisasi manual/otomatis dari server lokal dan (jika diminta) langsung dari Cloud Firestore
+  const refreshFromServer = async (options?: {
+    skipCloudRead?: boolean;
+    includeBackupSummary?: boolean;
+  }): Promise<{
     success: boolean;
     cloudConnected: boolean;
     error?: string;
   }> => {
     const startVersion = localMutationVersionRef.current;
+    const skipCloudRead = options?.skipCloudRead ?? false;
+    const includeBackupSummary = options?.includeBackupSummary ?? !skipCloudRead;
     let cloudData: Record<string, any> | null = null;
     let serverData: Record<string, any> | null = null;
     let cloudConnectedNow = false;
@@ -2007,34 +2066,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     const [cloudRes, serverRes, backupRes] = await Promise.allSettled([
-      readMainCloudFromServer(),
+      skipCloudRead ? Promise.resolve(null) : readMainCloudFromServer(),
       fetch('/api/state').then((r) => r.json()),
-      readBackupCloud(),
+      includeBackupSummary ? readBackupCloud() : Promise.resolve(null),
     ]);
 
-    if (cloudRes.status === 'fulfilled') {
-      cloudConnectedNow = true;
-      if (cloudRes.value.exists()) {
-        cloudData = cloudRes.value.data();
-      }
-      lastCloudSyncErrorRef.current = null;
-      setIsCloudConnected(true);
-      setCloudSyncError(null);
-    } else {
-      const classified = classifyFirestoreError(cloudRes.reason);
-      cloudErrorMsg = classified.message;
-      lastCloudSyncErrorRef.current = classified.message;
-      setIsCloudConnected(false);
-      setCloudSyncError(classified.message);
-
-      // Baca cache lokal Firestore hanya sebagai data tampilan sementara bila belum ada data sama sekali
-      try {
-        const cachedSnap = await getDoc(doc(db, 'simpati_data', 'main_store'));
-        if (cachedSnap.exists()) {
-          cloudData = cachedSnap.data();
+    if (!skipCloudRead) {
+      if (cloudRes.status === 'fulfilled' && cloudRes.value) {
+        cloudConnectedNow = true;
+        if (cloudRes.value.exists()) {
+          cloudData = cloudRes.value.data();
         }
-      } catch {
-        // Abaikan jika cache juga belum tersedia
+        lastCloudSyncErrorRef.current = null;
+        lastCloudErrorCategoryRef.current = null;
+        setIsCloudConnected(true);
+        setCloudSyncError(null);
+        setCloudSyncErrorCategory(null);
+      } else if (cloudRes.status === 'rejected') {
+        const classified = classifyFirestoreError(cloudRes.reason);
+        cloudErrorMsg = classified.message;
+        lastCloudSyncErrorRef.current = classified.message;
+        lastCloudErrorCategoryRef.current = classified.category;
+        setIsCloudConnected(false);
+        setCloudSyncError(classified.message);
+        setCloudSyncErrorCategory(classified.category);
+
+        // Baca cache lokal Firestore hanya sebagai data tampilan sementara bila belum ada data sama sekali
+        try {
+          const cachedSnap = await getDoc(doc(db, 'simpati_data', 'main_store'));
+          if (cachedSnap.exists()) {
+            cloudData = cachedSnap.data();
+          }
+        } catch {
+          // Abaikan jika cache juga belum tersedia
+        }
       }
     }
 
@@ -2043,7 +2108,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsServerConnected(true);
     }
 
-    if (backupRes.status === 'fulfilled' && backupRes.value.exists()) {
+    if (includeBackupSummary && backupRes.status === 'fulfilled' && backupRes.value && backupRes.value.exists()) {
       const b = backupRes.value.data();
       if (hasMeaningfulSchoolData(b)) {
         let estimatedBackupBytes = 0;
@@ -2087,6 +2152,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (cloudConnectedNow && decision.syncCloudFromServer && serverData && !hasMeaningfulSchoolData(cloudData)) {
         syncToCloud(stripUndefined(serverData));
       }
+    } else if (
+      serverData &&
+      !hasMeaningfulSchoolData(serverData) &&
+      hasMeaningfulSchoolData({
+        teachers: teachersRef.current,
+        subjects: subjectsRef.current,
+        classes: classesRef.current,
+        departments: departmentsRef.current,
+        rooms: roomsRef.current,
+        schedules: schedulesRef.current,
+        journals: journalsRef.current,
+      })
+    ) {
+      // Jika container server baru kosong tetapi browser punya data lokal valid (mis. saat kuota Cloud habis), isi server lokal dari browser
+      syncToServer(
+        'fullState',
+        stripUndefined({
+          teachers: teachersRef.current,
+          subjects: subjectsRef.current,
+          classes: classesRef.current,
+          departments: departmentsRef.current,
+          rooms: roomsRef.current,
+          academicYears: academicYearsRef.current,
+          schedules: schedulesRef.current,
+          attendanceRecords: attendanceRecordsRef.current,
+          userAccounts: userAccountsRef.current,
+          journals: journalsRef.current,
+          activeWeekFilter: activeWeekFilterRef.current,
+          monthlyWeekSchedules: monthlyWeekSchedulesRef.current,
+        }),
+        { lastUpdated: Date.now(), skipBroadcast: true }
+      );
     }
 
     // Jika Cloud baru pulih dan masih ada perubahan lokal yang belum terkirim, segera kirim sekarang
@@ -2116,7 +2213,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resubscribeFirestoreRef.current();
       }
 
-      const refreshRes = await refreshFromServer();
+      const refreshRes = await refreshFromServer({ skipCloudRead: false, includeBackupSummary: true });
       let flushOk = true;
       if (hasPendingCloudMutations()) {
         flushOk = await flushSyncQueue();
@@ -2173,15 +2270,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncToServer('fullState', payload);
       await setDoc(doc(db, 'simpati_data', 'main_store'), payload);
       lastCloudSyncErrorRef.current = null;
+      lastCloudErrorCategoryRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
+      setCloudSyncErrorCategory(null);
       return true;
     } catch (err: any) {
       handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
       const classified = classifyFirestoreError(err);
       lastCloudSyncErrorRef.current = classified.message;
+      lastCloudErrorCategoryRef.current = classified.category;
       setIsCloudConnected(false);
       setCloudSyncError(classified.message);
+      setCloudSyncErrorCategory(classified.category);
       return false;
     }
   };
@@ -2196,7 +2297,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsCloudConnected(res.ok);
       if (!res.ok && res.error) {
         lastCloudSyncErrorRef.current = res.error.message;
+        lastCloudErrorCategoryRef.current = res.error.category;
         setCloudSyncError(res.error.message);
+        setCloudSyncErrorCategory(res.error.category);
       }
     });
 
@@ -2234,8 +2337,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             applyRemoteStore(s);
             if (!snapshot.metadata.fromCache) {
               lastCloudSyncErrorRef.current = null;
+              lastCloudErrorCategoryRef.current = null;
               setIsCloudConnected(true);
               setCloudSyncError(null);
+              setCloudSyncErrorCategory(null);
+              syncToServer('fullState', s, {
+                lastUpdated: typeof s.lastUpdated === 'number' ? s.lastUpdated : Date.now(),
+                skipBroadcast: true,
+              });
               if (hasPendingCloudMutations()) {
                 scheduleSyncFlush();
               }
@@ -2249,8 +2358,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               if (serverSnap.exists()) {
                 applyRemoteStore(serverSnap.data());
                 lastCloudSyncErrorRef.current = null;
+                lastCloudErrorCategoryRef.current = null;
                 setIsCloudConnected(true);
                 setCloudSyncError(null);
+                setCloudSyncErrorCategory(null);
                 return;
               }
 
@@ -2286,8 +2397,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               });
               await setDoc(doc(db, 'simpati_data', 'main_store'), initialStore, { merge: true });
               lastCloudSyncErrorRef.current = null;
+              lastCloudErrorCategoryRef.current = null;
               setIsCloudConnected(true);
               setCloudSyncError(null);
+              setCloudSyncErrorCategory(null);
             } catch (seedErr) {
               console.warn('[SIMPATI Cloud] Verifikasi/inisialisasi cloud store awal:', seedErr);
             }
@@ -2298,10 +2411,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           handleFirestoreError(err, OperationType.GET, 'simpati_data/main_store');
           const classified = classifyFirestoreError(err);
           lastCloudSyncErrorRef.current = classified.message;
+          lastCloudErrorCategoryRef.current = classified.category;
           setIsCloudConnected(false);
           setCloudSyncError(classified.message);
+          setCloudSyncErrorCategory(classified.category);
 
-          // Firestore menghentikan listener saat error; daftarkan ulang otomatis untuk gangguan sementara
+          // Firestore menghentikan listener saat error; daftarkan ulang otomatis hanya untuk gangguan sementara
           if (classified.isTransient && !snapshotRetryTimerRef.current) {
             const delayMs = Math.min(30_000, 3000 * Math.pow(2, snapshotRetryAttemptRef.current));
             snapshotRetryAttemptRef.current += 1;
@@ -2309,7 +2424,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               snapshotRetryTimerRef.current = null;
               if (isMounted) {
                 attachFirestoreListener();
-                void refreshFromServer();
+                void refreshFromServer({ skipCloudRead: true });
               }
             }, delayMs);
           }
@@ -2320,15 +2435,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     resubscribeFirestoreRef.current = attachFirestoreListener;
     attachFirestoreListener();
 
-    // 2. Panggil refresh awal dan dengarkan server SSE lokal
-    void refreshFromServer();
+    // 2. Muat server lokal tanpa menggandakan baca Cloud Firestore (onSnapshot sudah menjadi pembaca Cloud utama)
+    void refreshFromServer({ skipCloudRead: true, includeBackupSummary: false });
 
     const handleOnline = () => {
       if (!isMounted) return;
+      if (lastCloudErrorCategoryRef.current === 'quota') return;
       void retryCloudSync();
     };
     const handleVisibilityChange = () => {
       if (!isMounted || document.visibilityState !== 'visible') return;
+      if (lastCloudErrorCategoryRef.current === 'quota') return;
       if (lastCloudSyncErrorRef.current || hasPendingCloudMutations()) {
         void retryCloudSync();
       }
@@ -3620,7 +3737,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
         const classified = classifyFirestoreError(err);
         lastCloudSyncErrorRef.current = classified.message;
+        lastCloudErrorCategoryRef.current = classified.category;
         setCloudSyncError(classified.message);
+        setCloudSyncErrorCategory(classified.category);
       });
     }
   };
@@ -3803,8 +3922,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         skipBroadcast: false,
       });
       lastCloudSyncErrorRef.current = null;
+      lastCloudErrorCategoryRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
+      setCloudSyncErrorCategory(null);
       scheduleAutoCloudBackup('Setelah Impor Gabung Database');
 
       return {
@@ -3820,7 +3941,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
       const classified = classifyFirestoreError(err);
       lastCloudSyncErrorRef.current = classified.message;
+      lastCloudErrorCategoryRef.current = classified.category;
       setCloudSyncError(classified.message);
+      setCloudSyncErrorCategory(classified.category);
       return {
         success: false,
         addedSchedules: 0,
@@ -3917,8 +4040,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         skipBroadcast: false,
       });
       lastCloudSyncErrorRef.current = null;
+      lastCloudErrorCategoryRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
+      setCloudSyncErrorCategory(null);
 
       return {
         success: true,
@@ -3931,7 +4056,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
       const classified = classifyFirestoreError(err);
       lastCloudSyncErrorRef.current = classified.message;
+      lastCloudErrorCategoryRef.current = classified.category;
       setCloudSyncError(classified.message);
+      setCloudSyncErrorCategory(classified.category);
       return {
         success: false,
         message: `Gagal memulihkan backup ke Cloud: ${classified.message}`,
@@ -4019,13 +4146,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await setDoc(doc(db, 'simpati_data', 'main_store'), stripUndefined(freshPayload));
       lastCloudSyncErrorRef.current = null;
+      lastCloudErrorCategoryRef.current = null;
       setIsCloudConnected(true);
       setCloudSyncError(null);
+      setCloudSyncErrorCategory(null);
     } catch (err: any) {
       handleFirestoreError(err, OperationType.WRITE, 'simpati_data/main_store');
       const classified = classifyFirestoreError(err);
       lastCloudSyncErrorRef.current = classified.message;
+      lastCloudErrorCategoryRef.current = classified.category;
       setCloudSyncError(classified.message);
+      setCloudSyncErrorCategory(classified.category);
     }
   };
 
@@ -4087,6 +4218,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isCloudConnected,
         isRetryingCloudSync,
         cloudSyncError,
+        cloudSyncErrorCategory,
         hasCloudBackup,
         cloudBackupSummary,
         logout,
@@ -4179,6 +4311,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteJournal,
         refreshFromServer,
         retryCloudSync,
+        loadCloudBackupSummary,
         seedDatabaseFromPreset,
         createCloudBackup,
         restoreFromCloudBackup,
