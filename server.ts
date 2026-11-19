@@ -152,8 +152,13 @@ async function startServer() {
       const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
       if (fs.existsSync(cfgPath)) {
         const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-        projectId = cfg.projectId || '';
-        databaseId = cfg.firestoreDatabaseId || '(default)';
+        if (cfg.firestoreDatabaseId) {
+          projectId = cfg.projectId || '';
+          databaseId = cfg.firestoreDatabaseId;
+        } else {
+          projectId = 'model-cell-lrrhs';
+          databaseId = 'ai-studio-simpatismkn1tega-a2de4c12-589c-4acb-97fa-2ab69d4a292a';
+        }
       }
     } catch {
       // Abaikan jika gagal membaca konfigurasi

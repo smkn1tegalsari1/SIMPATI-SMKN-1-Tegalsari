@@ -248,6 +248,7 @@ interface AppContextType {
   addJournal: (journal: TeachingJournal) => void;
   updateJournal: (journal: TeachingJournal) => void;
   deleteJournal: (id: string) => void;
+  deleteJournalsBulk: (ids: string[]) => Promise<boolean>;
 
   // Sinkronisasi Database Terpusat
   refreshFromServer: (options?: {
@@ -3785,6 +3786,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const deleteJournalsBulk = async (ids: string[]): Promise<boolean> => {
+    const uniqueIds = Array.from(
+      new Set(ids.filter((id) => typeof id === 'string' && id.trim().length > 0))
+    );
+    if (uniqueIds.length === 0) return true;
+    const idSet = new Set(uniqueIds);
+    updateJournalsAndSync((prev) => prev.filter((j) => !idSet.has(j.id)), {
+      deleteIds: uniqueIds,
+    });
+    return await flushSyncQueue();
+  };
+
   // Impor & Gabung Cerdas Jadwal + Data Backup secara Transaksional Atomik ke Cloud Firestore
   const mergeImportedSchedulesAndData = async (
     payload: ParsedImportPayload,
@@ -4309,6 +4322,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addJournal,
         updateJournal,
         deleteJournal,
+        deleteJournalsBulk,
         refreshFromServer,
         retryCloudSync,
         loadCloudBackupSummary,

@@ -1,14 +1,56 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import { getFirestore, initializeFirestore, doc, getDocFromServer, Firestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Inisialisasi Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+interface AppletFirebaseConfig {
+  projectId: string;
+  appId: string;
+  apiKey: string;
+  authDomain: string;
+  firestoreDatabaseId?: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  measurementId?: string;
+  oAuthClientId?: string;
+  recaptchaSiteKey?: string;
+}
 
-const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
+const oauthAppletConfig = firebaseConfig as AppletFirebaseConfig;
+
+// Konfigurasi Firestore utama sekolah (dipertahankan agar tidak terputus saat OAuth menggunakan project terpisah)
+const LIVE_SCHOOL_FIRESTORE_CONFIG: AppletFirebaseConfig = {
+  projectId: 'model-cell-lrrhs',
+  appId: '1:113801419143:web:096d2733dbc66334925b22',
+  apiKey: 'AIzaSyDMwdLDxFFs89Ha8gQ4xi1aCAajdM8_suQ',
+  authDomain: 'model-cell-lrrhs.firebaseapp.com',
+  firestoreDatabaseId: 'ai-studio-simpatismkn1tega-a2de4c12-589c-4acb-97fa-2ab69d4a292a',
+  storageBucket: 'model-cell-lrrhs.firebasestorage.app',
+  messagingSenderId: '113801419143',
+  measurementId: '',
+};
+
+const firestoreTargetConfig: AppletFirebaseConfig = oauthAppletConfig.firestoreDatabaseId
+  ? oauthAppletConfig
+  : LIVE_SCHOOL_FIRESTORE_CONFIG;
+
+// Inisialisasi Firebase App utama untuk Cloud Firestore sekolah
+const app: FirebaseApp =
+  getApps().find((a) => a.name === '[DEFAULT]') || initializeApp(firestoreTargetConfig);
+
+// Inisialisasi Firebase Auth khusus Google Workspace OAuth (gunakan app yang sama jika projectId identik)
+const workspaceOAuthApp: FirebaseApp =
+  oauthAppletConfig.projectId === firestoreTargetConfig.projectId
+    ? app
+    : getApps().find((a) => a.name === 'google-drive-oauth') ||
+      initializeApp(oauthAppletConfig, 'google-drive-oauth');
+
+export const workspaceAuth = getAuth(workspaceOAuthApp);
+
+const databaseId = firestoreTargetConfig.firestoreDatabaseId || '(default)';
 
 export const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
-export const FIRESTORE_CONSOLE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
+export const FIRESTORE_CONSOLE_UPGRADE_URL = `https://console.firebase.google.com/project/${firestoreTargetConfig.projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
 
 // Inisialisasi Firestore dengan ignoreUndefinedProperties dan experimentalAutoDetectLongPolling
 // agar koneksi stabil di jaringan sekolah, proxy, iFrame, maupun seluler

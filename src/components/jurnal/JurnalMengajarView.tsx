@@ -32,6 +32,7 @@ import {
   buildTeachingJournalPdf,
   downloadGeneratedPdf,
 } from '../../data/beritaAcaraPdf';
+import { AdminJournalDriveBackupCard } from './AdminJournalDriveBackupCard';
 
 interface SyncedScheduleCard {
   key: string;
@@ -88,6 +89,7 @@ export const JurnalMengajarView: React.FC = () => {
   const {
     journals,
     deleteJournal,
+    deleteJournalsBulk,
     teachers,
     classes,
     rooms,
@@ -669,6 +671,17 @@ export const JurnalMengajarView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Panel Khusus Admin: Backup Jurnal ke Google Drive & Bersihkan Cloud */}
+      {currentUser.role === 'admin' && (
+        <AdminJournalDriveBackupCard
+          isAdmin={currentUser.role === 'admin'}
+          journals={journals}
+          currentUserName={currentUser.name || 'Administrator SIMPATI'}
+          onDeleteJournalsBulk={deleteJournalsBulk}
+          onNotify={(msg) => setToastMessage(msg)}
+        />
+      )}
 
       {/* PANEL SINKRONISASI JADWAL MENGAJAR GURU (SESUAI HARI & PILIHAN PEKAN MINGGUAN) */}
       <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-sm space-y-4 no-print">
