@@ -16,6 +16,7 @@ export interface JournalBackupBuildMeta {
   periodRange: JournalBackupPeriodRange;
   backedUpBy: string;
   backedUpAt: number;
+  backupKindLabel?: string;
 }
 
 const INDO_DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'] as const;
@@ -231,7 +232,10 @@ export function buildJournalBackupWorkbookArrayBuffer(
 
   const summaryRows = [
     { Keterangan: 'Aplikasi', Nilai: 'SIMPATI SMKN 1 Tegalsari' },
-    { Keterangan: 'Jenis Backup', Nilai: 'Arsip Jurnal Mengajar ke Google Drive' },
+    {
+      Keterangan: 'Jenis Backup',
+      Nilai: meta.backupKindLabel || 'Arsip Jurnal Mengajar (Excel .xlsx)',
+    },
     { Keterangan: 'Periode', Nilai: meta.periodRange.label },
     { Keterangan: 'Rentang Tanggal', Nilai: `${meta.periodRange.startDate} s/d ${meta.periodRange.endDate}` },
     { Keterangan: 'Total Jurnal Terarsip', Nilai: String(journals.length) },
@@ -257,6 +261,94 @@ export function buildJournalBackupWorkbookArrayBuffer(
   XLSX.utils.book_append_sheet(wb, summarySheet, 'Info Backup');
 
   return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+}
+
+export function sortJournalsChronologically(journals: TeachingJournal[]): TeachingJournal[] {
+  return [...journals].sort((a, b) => {
+    const da = normalizeJournalDateISO(a.date) || a.date || '';
+    const db = normalizeJournalDateISO(b.date) || b.date || '';
+    if (da !== db) return da.localeCompare(db);
+    const pa = Number(a.startPeriod) || 0;
+    const pb = Number(b.startPeriod) || 0;
+    if (pa !== pb) return pa - pb;
+    return (a.teacherName || '').localeCompare(b.teacherName || '');
+  });
+}
+
+export function buildJournalBackupRangeFromList(
+  journals: TeachingJournal[],
+  customLabel = 'Data Jurnal Terpilih',
+  fileSlugPrefix = 'Jurnal_Mengajar'
+): JournalBackupPeriodRange {
+  const sorted = sortJournalsChronologically(journals);
+  const todayIso = toLocalISODate(new Date());
+  const firstIso = sorted.length > 0 ? normalizeJournalDateISO(sorted[0].date) || todayIso : todayIso;
+  const lastIso =
+    sorted.length > 0
+      ? normalizeJournalDateISO(sorted[sorted.length - 1].date) || firstIso
+      : firstIso;
+  const slugDate = firstIso === lastIso ? firstIso : `${firstIso}_sd_${lastIso}`;
+  return {
+    periodType: 'harian',
+    startDate: firstIso,
+    endDate: lastIso,
+    label: customLabel,
+    shortLabel:
+      firstIso === lastIso
+        ? formatIndoDateMedium(firstIso)
+        : `${formatIndoDateMedium(firstIso)} – ${formatIndoDateMedium(lastIso)}`,
+    fileSlug: `${fileSlugPrefix}_${slugDate}`,
+  };
+}
+
+export function downloadJournalBackupExcel(
+  journals: TeachingJournal[],
+  options: {
+    periodRange?: JournalBackupPeriodRange;
+    customLabel?: string;
+    fileSlugPrefix?: string;
+    backedUpBy: string;
+    backupKindLabel?: string;
+  }
+): { filename: string; count: number } {
+  const sorted = sortJournalsChronologically(journals);
+  const backedUpAt = Date.now();
+  const range =
+    options.periodRange ||
+    buildJournalBackupRangeFromList(
+      sorted,
+      options.customLabel || 'Data Jurnal Terfilter',
+      options.fileSlugPrefix || 'Jurnal_Mengajar'
+    );
+
+  const buffer = buildJournalBackupWorkbookArrayBuffer(sorted, {
+    periodRange: range,
+    backedUpBy: options.backedUpBy,
+    backedUpAt,
+    backupKindLabel: options.backupKindLabel || 'Backup Lokal Jurnal Mengajar (Excel .xlsx)',
+  });
+
+  const stamp = new Date(backedUpAt);
+  const timeSuffix =
+    `${stamp.getFullYear()}${String(stamp.getMonth() + 1).padStart(2, '0')}${String(
+      stamp.getDate()
+    ).padStart(2, '0')}_` +
+    `${String(stamp.getHours()).padStart(2, '0')}${String(stamp.getMinutes()).padStart(2, '0')}`;
+  const filename = `Backup_${range.fileSlug}_${timeSuffix}.xlsx`;
+
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  return { filename, count: sorted.length };
 }
 
 export function buildJournalBackupJsonString(

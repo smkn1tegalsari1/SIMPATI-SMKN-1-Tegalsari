@@ -18,10 +18,12 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  Download,
 } from 'lucide-react';
 import { TeachingJournal } from '../../types';
 import {
   JournalBackupPeriodType,
+  downloadJournalBackupExcel,
   filterJournalsByPeriod,
   normalizeJournalDateISO,
   toLocalISODate,
@@ -227,6 +229,22 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
     else setMonthlyValue(latestJournalIso.slice(0, 7));
   };
 
+  const handleDownloadPeriodExcel = () => {
+    setDriveError(null);
+    if (matchedJournals.length === 0) {
+      setDriveError('Tidak ada jurnal pada periode yang dipilih untuk diunduh sebagai Excel.');
+      return;
+    }
+    const res = downloadJournalBackupExcel(matchedJournals, {
+      periodRange,
+      backedUpBy: currentUserName || 'Administrator SIMPATI',
+      backupKindLabel: 'Backup Lokal Jurnal Mengajar Periode (Excel .xlsx)',
+    });
+    onNotify?.(
+      `Backup Excel "${res.filename}" (${res.count} jurnal) berhasil diunduh ke perangkat. Data di database Cloud tetap aman.`
+    );
+  };
+
   const handleOpenConfirmModal = () => {
     setDriveError(null);
     if (!driveToken || needsAuth) {
@@ -343,10 +361,10 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
             </span>
           </div>
           <h2 className="text-base sm:text-lg font-extrabold tracking-tight">
-            Backup Jurnal Mengajar ke Google Drive & Bersihkan Cloud
+            Backup Jurnal Mengajar (Excel & Google Drive)
           </h2>
           <p className="text-xs text-slate-300 max-w-2xl">
-            Arsipkan jurnal periode Harian, Mingguan, atau Bulanan ke Google Drive (.xlsx & .json), lalu hapus otomatis dari database Cloud agar penyimpanan Firestore tetap lega.
+            Unduh backup jurnal periode Harian, Mingguan, atau Bulanan dalam bentuk Excel (.xlsx), atau arsipkan langsung ke Google Drive lalu bersihkan database Cloud Firestore.
           </p>
         </div>
 
@@ -639,21 +657,34 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
                     Folder tujuan Drive: <strong className="text-slate-700">{DRIVE_BACKUP_FOLDER_NAME}</strong>
                   </p>
                   <p>
-                    Format terunggah: <strong className="text-slate-700">Excel (.xlsx) + Arsip JSON (.json)</strong>
+                    Format tersedia: <strong className="text-slate-700">Excel Lokal (.xlsx)</strong> atau <strong className="text-slate-700">Drive (.xlsx + .json)</strong>
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleOpenConfirmModal}
-                  disabled={matchedJournals.length === 0 || !driveToken || needsAuth || executionStep !== 'idle'}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0B1E2E] hover:bg-[#132E45] disabled:bg-slate-300 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer disabled:cursor-not-allowed shrink-0"
-                >
-                  <CloudUpload className="w-4 h-4" />
-                  <span>
-                    Backup ke Drive & Hapus Cloud ({matchedJournals.length})
-                  </span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleDownloadPeriodExcel}
+                    disabled={matchedJournals.length === 0 || executionStep !== 'idle'}
+                    className="inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer disabled:cursor-not-allowed"
+                    title="Unduh file backup Excel (.xlsx) langsung ke perangkat tanpa menghapus data Cloud"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh Excel ({matchedJournals.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenConfirmModal}
+                    disabled={matchedJournals.length === 0 || !driveToken || needsAuth || executionStep !== 'idle'}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0B1E2E] hover:bg-[#132E45] disabled:bg-slate-300 text-white text-xs font-bold rounded-xl shadow-sm transition cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <CloudUpload className="w-4 h-4" />
+                    <span>
+                      Backup ke Drive & Hapus Cloud ({matchedJournals.length})
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
 
