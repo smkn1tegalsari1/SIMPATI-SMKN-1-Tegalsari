@@ -82,6 +82,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
   const [executionStep, setExecutionStep] = useState<'idle' | 'uploading' | 'deleting_cloud'>('idle');
   const [driveError, setDriveError] = useState<string | null>(null);
   const [driveErrorSuggestNewTab, setDriveErrorSuggestNewTab] = useState<boolean>(false);
+  const [driveConsoleSettingsUrl, setDriveConsoleSettingsUrl] = useState<string | null>(null);
   const [lastBackupResult, setLastBackupResult] = useState<{
     result: JournalDriveBackupResult;
     deletedCount: number;
@@ -181,6 +182,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
   const handleGoogleSignIn = async () => {
     setDriveError(null);
     setDriveErrorSuggestNewTab(false);
+    setDriveConsoleSettingsUrl(null);
     setIsSigningIn(true);
     try {
       const res = await googleDriveSignIn();
@@ -196,6 +198,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
           : formatted.message
       );
       setDriveErrorSuggestNewTab(formatted.suggestNewTab);
+      setDriveConsoleSettingsUrl(formatted.consoleSettingsUrl || null);
     } finally {
       setIsSigningIn(false);
     }
@@ -204,6 +207,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
   const handleGoogleSignOut = async () => {
     setDriveError(null);
     setDriveErrorSuggestNewTab(false);
+    setDriveConsoleSettingsUrl(null);
     try {
       await googleDriveSignOut();
       setDriveUser(null);
@@ -443,25 +447,41 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
                   onClick={() => {
                     setDriveError(null);
                     setDriveErrorSuggestNewTab(false);
+                    setDriveConsoleSettingsUrl(null);
                   }}
                   className="text-rose-700 hover:underline text-[11px] shrink-0 cursor-pointer"
                 >
                   Tutup
                 </button>
               </div>
-              {(driveErrorSuggestNewTab || isRunningInsideIframe()) && typeof window !== 'undefined' && (
+              {driveConsoleSettingsUrl && (
                 <div className="pl-6 flex flex-wrap items-center gap-2">
                   <a
-                    href={window.location.href}
+                    href={driveConsoleSettingsUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-rose-100/60 text-rose-900 border border-rose-300 text-xs font-bold transition"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Buka Aplikasi di Tab Baru untuk Login Google</span>
+                    <span>Buka Firebase Authorized Domains</span>
                   </a>
                 </div>
               )}
+              {!driveConsoleSettingsUrl &&
+                (driveErrorSuggestNewTab || isRunningInsideIframe()) &&
+                typeof window !== 'undefined' && (
+                  <div className="pl-6 flex flex-wrap items-center gap-2">
+                    <a
+                      href={window.location.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-rose-100/60 text-rose-900 border border-rose-300 text-xs font-bold transition"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Buka Aplikasi di Tab Baru untuk Login Google</span>
+                    </a>
+                  </div>
+                )}
             </div>
           )}
 

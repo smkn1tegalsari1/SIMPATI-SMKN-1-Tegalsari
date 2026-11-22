@@ -17,6 +17,8 @@ import {
   BookCheck,
   RefreshCw,
   AlertTriangle,
+  Loader2,
+  CheckSquare,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ScheduleWeekType, TeachingJournal } from '../../types';
@@ -121,6 +123,9 @@ export const JurnalMengajarView: React.FC = () => {
   const [editingJournal, setEditingJournal] = useState<TeachingJournal | null>(null);
   const [modalInitialWeekMode, setModalInitialWeekMode] = useState<JournalWeekFilterMode>('AUTO');
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<TeachingJournal | null>(null);
+  const [selectedJournalIds, setSelectedJournalIds] = useState<string[]>([]);
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState<boolean>(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // State sinkronisasi jadwal guru sesuai hari & pilihan pekan mingguan
@@ -451,6 +456,55 @@ export const JurnalMengajarView: React.FC = () => {
     monthlyWeekSchedules,
   ]);
 
+  // Sinkronkan pilihan hapus banyak agar hanya menyimpan ID jurnal yang masih tersedia
+  useEffect(() => {
+    const validIds = new Set(scopedJournals.map((j) => j.id));
+    setSelectedJournalIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [scopedJournals]);
+
+  const selectedJournalIdSet = useMemo(() => new Set(selectedJournalIds), [selectedJournalIds]);
+
+  const selectedJournalsList = useMemo(
+    () => scopedJournals.filter((j) => selectedJournalIdSet.has(j.id)),
+    [scopedJournals, selectedJournalIdSet]
+  );
+
+  const visibleSelectedCount = useMemo(
+    () => filteredJournals.filter((j) => selectedJournalIdSet.has(j.id)).length,
+    [filteredJournals, selectedJournalIdSet]
+  );
+
+  const allVisibleSelected =
+    filteredJournals.length > 0 && visibleSelectedCount === filteredJournals.length;
+  const someVisibleSelected =
+    visibleSelectedCount > 0 && visibleSelectedCount < filteredJournals.length;
+
+  const toggleJournalSelection = (id: string) => {
+    setSelectedJournalIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = filteredJournals.map((j) => j.id);
+    if (visibleIds.length === 0) return;
+    if (allVisibleSelected) {
+      const visibleSet = new Set(visibleIds);
+      setSelectedJournalIds((prev) => prev.filter((id) => !visibleSet.has(id)));
+    } else {
+      setSelectedJournalIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+    }
+  };
+
+  const selectAllVisible = () => {
+    const visibleIds = filteredJournals.map((j) => j.id);
+    if (visibleIds.length === 0) return;
+    setSelectedJournalIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+  };
+
   // Statistik Jurnal
   const totalCount = scopedJournals.length;
   const todayCount = scopedJournals.filter((j) => j.date === todayISO).length;
@@ -530,8 +584,34 @@ export const JurnalMengajarView: React.FC = () => {
   const handleConfirmDelete = () => {
     if (!deleteConfirmTarget) return;
     deleteJournal(deleteConfirmTarget.id);
+    setSelectedJournalIds((prev) => prev.filter((id) => id !== deleteConfirmTarget.id));
     setToastMessage(`Jurnal "${deleteConfirmTarget.subjectName} (${deleteConfirmTarget.className})" berhasil dihapus.`);
     setDeleteConfirmTarget(null);
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    const idsToDelete = selectedJournalsList.map((j) => j.id).filter(Boolean);
+    if (idsToDelete.length === 0) {
+      setIsBulkDeleteConfirmOpen(false);
+      return;
+    }
+    setIsBulkDeleting(true);
+    try {
+      const cloudSynced = await deleteJournalsBulk(idsToDelete);
+      setSelectedJournalIds([]);
+      setIsBulkDeleteConfirmOpen(false);
+      if (cloudSynced) {
+        setToastMessage(
+          `Berhasil menghapus ${idsToDelete.length} jurnal mengajar secara permanen dari aplikasi & Cloud Firestore.`
+        );
+      } else {
+        setToastMessage(
+          `${idsToDelete.length} jurnal dihapus secara lokal dan sedang menunggu sinkronisasi Cloud Firestore.`
+        );
+      }
+    } finally {
+      setIsBulkDeleting(false);
+    }
   };
 
   const handlePrint = () => {
@@ -1125,10 +1205,77 @@ export const JurnalMengajarView: React.FC = () => {
         </div>
       ) : (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* Toolbar Hapus Banyak / Seleksi Jurnal */}
+          <div
+            className={`px-4 py-3 border-b flex flex-wrap items-center justify-between gap-2.5 transition-colors ${
+              selectedJournalsList.length > 0
+                ? 'bg-rose-50/90 border-rose-200'
+                : 'bg-slate-50/60 border-slate-200'
+            }`}
+          >
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <CheckSquare
+                className={`w-4 h-4 shrink-0 ${
+                  selectedJournalsList.length > 0 ? 'text-rose-600' : 'text-slate-400'
+                }`}
+              />
+              {selectedJournalsList.length > 0 ? (
+                <span className="font-extrabold text-rose-900">
+                  {selectedJournalsList.length} jurnal dipilih
+                </span>
+              ) : (
+                <span className="font-medium text-slate-600">
+                  Centang baris jurnal untuk menghapus banyak sekaligus
+                </span>
+              )}
+              {!allVisibleSelected && filteredJournals.length > 0 && (
+                <button
+                  type="button"
+                  onClick={selectAllVisible}
+                  className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold transition cursor-pointer"
+                >
+                  Pilih Semua ({filteredJournals.length})
+                </button>
+              )}
+            </div>
+
+            {selectedJournalsList.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedJournalIds([])}
+                  className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition cursor-pointer"
+                >
+                  Batal Pilih
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBulkDeleteConfirmOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Hapus {selectedJournalsList.length} Jurnal</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs md:text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-600 font-bold uppercase text-[11px] tracking-wider">
+                  <th className="py-3.5 pl-4 pr-2 w-10">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someVisibleSelected;
+                      }}
+                      onChange={toggleSelectAllVisible}
+                      aria-label="Pilih semua jurnal yang tampil"
+                      className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer accent-rose-600"
+                    />
+                  </th>
                   <th className="py-3.5 px-4 w-44">Tanggal & Waktu</th>
                   <th className="py-3.5 px-4">Guru</th>
                   <th className="py-3.5 px-4">Kelas & Ruang</th>
@@ -1139,6 +1286,7 @@ export const JurnalMengajarView: React.FC = () => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredJournals.map((j) => {
+                  const isSelected = selectedJournalIdSet.has(j.id);
                   const parts = (j.date || '').split('-');
                   let journalWeekLabel = '';
                   let journalWeekType: ScheduleWeekType = 'ALL';
@@ -1155,8 +1303,21 @@ export const JurnalMengajarView: React.FC = () => {
                   return (
                     <tr
                       key={j.id}
-                      className="hover:bg-slate-50/70 transition-colors group"
+                      className={`transition-colors group ${
+                        isSelected ? 'bg-rose-50/50 hover:bg-rose-50/80' : 'hover:bg-slate-50/70'
+                      }`}
                     >
+                      {/* Checkbox Seleksi */}
+                      <td className="py-3.5 pl-4 pr-2 align-top">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleJournalSelection(j.id)}
+                          aria-label={`Pilih jurnal ${j.subjectName} tanggal ${j.date}`}
+                          className="w-4 h-4 mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer accent-rose-600"
+                        />
+                      </td>
+
                       {/* Tanggal & Jam */}
                       <td className="py-3.5 px-4 align-top">
                         <div className="font-bold text-slate-900 flex items-center gap-1.5">
@@ -1284,6 +1445,74 @@ export const JurnalMengajarView: React.FC = () => {
                 className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition cursor-pointer shadow-xs"
               >
                 Ya, Hapus Jurnal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Hapus Banyak Jurnal */}
+      {isBulkDeleteConfirmOpen && selectedJournalsList.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 border border-slate-200 animate-in zoom-in-95">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-200 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-extrabold text-slate-900 text-base">
+                  Hapus {selectedJournalsList.length} Jurnal Mengajar?
+                </h3>
+                <p className="text-xs text-slate-600">
+                  Sebanyak <strong>{selectedJournalsList.length} entri jurnal</strong> yang dipilih akan dihapus permanen dari aplikasi dan database Cloud Firestore.
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-40 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-xl bg-slate-50">
+              {selectedJournalsList.slice(0, 6).map((item) => (
+                <div key={item.id} className="px-3 py-2 text-[11px]">
+                  <div className="font-bold text-slate-800">
+                    {item.date} · {item.teacherName}
+                  </div>
+                  <div className="text-slate-500 truncate">
+                    {item.className} — {item.subjectName}
+                  </div>
+                </div>
+              ))}
+              {selectedJournalsList.length > 6 && (
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-500 text-center bg-white">
+                  ...dan {selectedJournalsList.length - 6} jurnal lainnya
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteConfirmOpen(false)}
+                disabled={isBulkDeleting}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmBulkDelete()}
+                disabled={isBulkDeleting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition cursor-pointer shadow-xs disabled:opacity-70"
+              >
+                {isBulkDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Ya, Hapus {selectedJournalsList.length} Jurnal</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

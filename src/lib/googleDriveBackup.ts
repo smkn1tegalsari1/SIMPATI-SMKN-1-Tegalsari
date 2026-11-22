@@ -94,11 +94,19 @@ export const prewarmGoogleAuthPopup = (): Promise<boolean> => {
 
 export const formatGoogleAuthError = (
   err: unknown
-): { code: string; message: string; suggestNewTab: boolean } => {
+): {
+  code: string;
+  message: string;
+  suggestNewTab: boolean;
+  consoleSettingsUrl?: string;
+  unauthorizedHostname?: string;
+} => {
   const errObj = err as { code?: string; message?: string } | null;
   const code = typeof errObj?.code === 'string' ? errObj.code : '';
   const rawMessage = err instanceof Error ? err.message : String(errObj?.message || err || '');
   const inIframe = isRunningInsideIframe();
+  const oauthProjectId = workspaceAuth.app.options.projectId || '';
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
 
   switch (code) {
     case 'auth/popup-blocked':
@@ -134,10 +142,14 @@ export const formatGoogleAuthError = (
     case 'auth/unauthorized-continue-uri':
       return {
         code,
-        message: `Domain "${
-          typeof window !== 'undefined' ? window.location.hostname : ''
-        }" belum diotorisasi pada Firebase Auth OAuth.`,
+        message: `Domain "${currentHost}" belum terdaftar di Authorized Domains Firebase Authentication (proyek "${oauthProjectId}"). Tambahkan domain "${currentHost}" di Firebase Console -> Authentication -> Settings -> Authorized domains, lalu coba login ulang.`,
         suggestNewTab: false,
+        unauthorizedHostname: currentHost,
+        consoleSettingsUrl: oauthProjectId
+          ? `https://console.firebase.google.com/project/${encodeURIComponent(
+              oauthProjectId
+            )}/authentication/settings`
+          : undefined,
       };
     case 'auth/operation-not-allowed':
       return {
