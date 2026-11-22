@@ -33,11 +33,14 @@ import {
   JournalDriveBackupResult,
   backupJournalsToGoogleDrive,
   clearGoogleDriveAccessToken,
+  formatGoogleAuthError,
   getGoogleDriveAccessToken,
   googleDriveSignIn,
   googleDriveSignOut,
   initGoogleDriveAuth,
+  isRunningInsideIframe,
   listRecentJournalDriveBackups,
+  prewarmGoogleAuthPopup,
 } from '../../lib/googleDriveBackup';
 
 interface AdminJournalDriveBackupCardProps {
@@ -78,6 +81,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(false);
   const [executionStep, setExecutionStep] = useState<'idle' | 'uploading' | 'deleting_cloud'>('idle');
   const [driveError, setDriveError] = useState<string | null>(null);
+  const [driveErrorSuggestNewTab, setDriveErrorSuggestNewTab] = useState<boolean>(false);
   const [lastBackupResult, setLastBackupResult] = useState<{
     result: JournalDriveBackupResult;
     deletedCount: number;
@@ -87,6 +91,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
 
   useEffect(() => {
     if (!isAdmin) return;
+    void prewarmGoogleAuthPopup();
     const unsubscribe = initGoogleDriveAuth(
       (user, token) => {
         setDriveUser(user);
@@ -175,22 +180,22 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
 
   const handleGoogleSignIn = async () => {
     setDriveError(null);
+    setDriveErrorSuggestNewTab(false);
     setIsSigningIn(true);
     try {
       const res = await googleDriveSignIn();
       setDriveUser(res.user);
       setDriveToken(res.accessToken);
       setNeedsAuth(false);
-      await loadDriveFiles(res.accessToken);
-    } catch (err: any) {
-      const code = err?.code || '';
-      if (code === 'auth/popup-closed-by-user') {
-        setDriveError('Login Google dibatalkan sebelum selesai.');
-      } else if (code === 'auth/popup-blocked') {
-        setDriveError('Popup login Google diblokir oleh browser. Izinkan popup untuk melanjutkan.');
-      } else {
-        setDriveError(err?.message || 'Gagal masuk dengan akun Google.');
-      }
+    } catch (err: unknown) {
+      const formatted = formatGoogleAuthError(err);
+      setIsExpanded(true);
+      setDriveError(
+        formatted.code && formatted.code !== 'unknown'
+          ? `${formatted.message} (${formatted.code})`
+          : formatted.message
+      );
+      setDriveErrorSuggestNewTab(formatted.suggestNewTab);
     } finally {
       setIsSigningIn(false);
     }
@@ -198,6 +203,7 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
 
   const handleGoogleSignOut = async () => {
     setDriveError(null);
+    setDriveErrorSuggestNewTab(false);
     try {
       await googleDriveSignOut();
       setDriveUser(null);
@@ -426,18 +432,36 @@ export const AdminJournalDriveBackupCard: React.FC<AdminJournalDriveBackupCardPr
         <div className="p-5 sm:p-6 space-y-5 bg-[#FAFBFD]">
           {/* Error Banner */}
           {driveError && (
-            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-start justify-between gap-3">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                <span>{driveError}</span>
+            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold space-y-2.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{driveError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDriveError(null);
+                    setDriveErrorSuggestNewTab(false);
+                  }}
+                  className="text-rose-700 hover:underline text-[11px] shrink-0 cursor-pointer"
+                >
+                  Tutup
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setDriveError(null)}
-                className="text-rose-700 hover:underline text-[11px] shrink-0 cursor-pointer"
-              >
-                Tutup
-              </button>
+              {(driveErrorSuggestNewTab || isRunningInsideIframe()) && typeof window !== 'undefined' && (
+                <div className="pl-6 flex flex-wrap items-center gap-2">
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-rose-100/60 text-rose-900 border border-rose-300 text-xs font-bold transition"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Buka Aplikasi di Tab Baru untuk Login Google</span>
+                  </a>
+                </div>
+              )}
             </div>
           )}
 

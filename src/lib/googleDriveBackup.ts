@@ -2,6 +2,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   onAuthStateChanged,
+  browserPopupRedirectResolver,
   User,
 } from 'firebase/auth';
 import { workspaceAuth } from './firebase';
@@ -19,12 +20,14 @@ export const DRIVE_BACKUP_FOLDER_NAME = 'Backup Jurnal Mengajar SIMPATI SMKN 1 T
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));
 provider.setCustomParameters({
-  prompt: 'consent',
+  prompt: 'select_account consent',
 });
 
 // Cache token HANYA di memori (tidak pernah disimpan di localStorage / sessionStorage)
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
+let prewarmPromise: Promise<boolean> | null = null;
+const inFlightFolderLookups = new Map<string, Promise<DriveFileInfo>>();
 
 export interface DriveFileInfo {
   id: string;
@@ -51,6 +54,115 @@ export class GoogleDriveAuthExpiredError extends Error {
   }
 }
 
+export function isRunningInsideIframe(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Pra-inisialisasi Firebase popup resolver (memuat gapi & __/auth/iframe)
+ * sebelum user mengklik tombol login, agar window.open() terpanggil sinkron
+ * saat klik dan tidak terblokir popup blocker Chrome.
+ */
+export const prewarmGoogleAuthPopup = (): Promise<boolean> => {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  if (prewarmPromise) return prewarmPromise;
+
+  prewarmPromise = (async () => {
+    try {
+      const resolver = browserPopupRedirectResolver as unknown as {
+        _initialize?: (auth: unknown) => Promise<unknown>;
+      };
+      if (typeof resolver?._initialize === 'function') {
+        await resolver._initialize(workspaceAuth);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('[SIMPATI Drive] Pra-inisialisasi popup Google Auth gagal:', err);
+      prewarmPromise = null;
+      return false;
+    }
+  })();
+
+  return prewarmPromise;
+};
+
+export const formatGoogleAuthError = (
+  err: unknown
+): { code: string; message: string; suggestNewTab: boolean } => {
+  const errObj = err as { code?: string; message?: string } | null;
+  const code = typeof errObj?.code === 'string' ? errObj.code : '';
+  const rawMessage = err instanceof Error ? err.message : String(errObj?.message || err || '');
+  const inIframe = isRunningInsideIframe();
+
+  switch (code) {
+    case 'auth/popup-blocked':
+      return {
+        code,
+        message: inIframe
+          ? 'Popup login Google diblokir oleh browser di dalam tampilan preview. Izinkan popup atau buka aplikasi di tab baru untuk menghubungkan Google Drive.'
+          : 'Popup login Google diblokir oleh browser. Silakan izinkan popup untuk situs ini lalu klik Sign in with Google kembali.',
+        suggestNewTab: inIframe,
+      };
+    case 'auth/popup-closed-by-user':
+      return {
+        code,
+        message: inIframe
+          ? 'Koneksi popup Google terputus sebelum selesai (sering terjadi di dalam preview iframe jika cookie pihak ketiga dibatasi). Coba buka aplikasi di tab baru untuk login Google.'
+          : 'Jendela login Google ditutup sebelum proses selesai. Silakan klik Sign in with Google dan selesaikan persetujuan akun.',
+        suggestNewTab: inIframe,
+      };
+    case 'auth/cancelled-popup-request':
+      return {
+        code,
+        message: 'Permintaan login Google sebelumnya dibatalkan. Silakan klik Sign in with Google satu kali lagi.',
+        suggestNewTab: false,
+      };
+    case 'auth/network-request-failed':
+      return {
+        code,
+        message:
+          'Gagal terhubung ke layanan autentikasi Google (apis.google.com / firebaseapp.com). Periksa koneksi internet, nonaktifkan pemblokir skrip/adblocker, atau coba buka di tab baru.',
+        suggestNewTab: inIframe,
+      };
+    case 'auth/unauthorized-domain':
+    case 'auth/unauthorized-continue-uri':
+      return {
+        code,
+        message: `Domain "${
+          typeof window !== 'undefined' ? window.location.hostname : ''
+        }" belum diotorisasi pada Firebase Auth OAuth.`,
+        suggestNewTab: false,
+      };
+    case 'auth/operation-not-allowed':
+      return {
+        code,
+        message: 'Metode login Google belum diaktifkan pada proyek Firebase Auth OAuth.',
+        suggestNewTab: false,
+      };
+    case 'auth/internal-error':
+    case 'auth/missing-iframe-start':
+      return {
+        code,
+        message: inIframe
+          ? 'Browser membatasi iframe autentikasi Google di dalam frame preview. Buka aplikasi di tab baru untuk menghubungkan Google Drive dengan lancar.'
+          : 'Terjadi kendala internal autentikasi Google. Muat ulang halaman lalu coba kembali.',
+        suggestNewTab: inIframe,
+      };
+    default:
+      return {
+        code: code || 'unknown',
+        message: rawMessage || 'Gagal terhubung dengan akun Google.',
+        suggestNewTab: inIframe,
+      };
+  }
+};
+
 export const initGoogleDriveAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
@@ -76,11 +188,12 @@ export const googleDriveSignIn = async (): Promise<{
 }> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(workspaceAuth, provider);
+    workspaceAuth.languageCode = 'id';
+    const result = await signInWithPopup(workspaceAuth, provider, browserPopupRedirectResolver);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error(
-        'Token akses Google Drive tidak diterima. Pastikan popup login tidak diblokir dan izin Google Drive disetujui.'
+        'Token akses Google Drive tidak diterima. Pastikan izin Google Drive disetujui pada layar login Google.'
       );
     }
     cachedAccessToken = credential.accessToken;
@@ -107,82 +220,123 @@ function escapeDriveQueryValue(val: string): string {
   return val.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-async function parseDriveErrorMessage(res: Response): Promise<string> {
+interface ParsedDriveError {
+  status: number;
+  reason: string;
+  message: string;
+}
+
+async function parseDriveError(res: Response): Promise<ParsedDriveError> {
+  let reason = '';
+  let message = `Google Drive API mengembalikan status HTTP ${res.status}`;
   try {
     const data = await res.json();
-    if (data?.error?.message) return String(data.error.message);
+    if (data?.error?.message) {
+      message = String(data.error.message);
+    }
+    const firstErr = Array.isArray(data?.error?.errors) ? data.error.errors[0] : null;
+    if (firstErr?.reason) {
+      reason = String(firstErr.reason);
+    }
   } catch {
     // Abaikan jika body bukan JSON
   }
-  return `Google Drive API mengembalikan status HTTP ${res.status}`;
+  return { status: res.status, reason, message };
+}
+
+function handleDriveHttpFailure(parsed: ParsedDriveError): never {
+  if (parsed.status === 401) {
+    cachedAccessToken = null;
+    throw new GoogleDriveAuthExpiredError();
+  }
+  if (parsed.status === 403) {
+    const lowerMsg = parsed.message.toLowerCase();
+    if (
+      parsed.reason === 'insufficientPermissions' ||
+      parsed.reason === 'authError' ||
+      lowerMsg.includes('insufficient authentication scopes') ||
+      lowerMsg.includes('insufficient permission')
+    ) {
+      cachedAccessToken = null;
+      throw new GoogleDriveAuthExpiredError(
+        'Izin akses Google Drive belum dicentang saat login Google. Klik Sign in with Google kembali dan pastikan kotak izin Google Drive dicentang.'
+      );
+    }
+  }
+  throw new Error(parsed.message);
 }
 
 export async function findOrCreateDriveFolder(
   accessToken: string,
   folderName: string = DRIVE_BACKUP_FOLDER_NAME
 ): Promise<DriveFileInfo> {
-  const q = `name='${escapeDriveQueryValue(
-    folderName
-  )}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const searchUrl =
-    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}` +
-    `&fields=${encodeURIComponent('files(id,name,webViewLink,mimeType,createdTime)')}` +
-    `&spaces=drive&pageSize=5`;
-
-  const searchRes = await fetch(searchUrl, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (searchRes.status === 401 || searchRes.status === 403) {
-    cachedAccessToken = null;
-    throw new GoogleDriveAuthExpiredError();
+  const dedupeKey = `${accessToken.slice(-16)}::${folderName}`;
+  const existingPromise = inFlightFolderLookups.get(dedupeKey);
+  if (existingPromise) {
+    return existingPromise;
   }
 
-  if (!searchRes.ok) {
-    throw new Error(await parseDriveErrorMessage(searchRes));
-  }
+  const run = (async () => {
+    const q = `name='${escapeDriveQueryValue(
+      folderName
+    )}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const searchUrl =
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}` +
+      `&fields=${encodeURIComponent('files(id,name,webViewLink,mimeType,createdTime)')}` +
+      `&spaces=drive&pageSize=5`;
 
-  const searchJson = (await searchRes.json()) as { files?: DriveFileInfo[] };
-  if (Array.isArray(searchJson.files) && searchJson.files.length > 0 && searchJson.files[0]?.id) {
-    return searchJson.files[0];
-  }
-
-  // Buat folder baru jika belum ada
-  const createRes = await fetch(
-    `https://www.googleapis.com/drive/v3/files?fields=${encodeURIComponent(
-      'id,name,webViewLink,mimeType,createdTime'
-    )}`,
-    {
-      method: 'POST',
+    const searchRes = await fetch(searchUrl, {
+      method: 'GET',
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        name: folderName,
-        mimeType: 'application/vnd.google-apps.folder',
-        description: 'Folder arsip otomatis backup Jurnal Mengajar SIMPATI SMKN 1 Tegalsari.',
-      }),
+    });
+
+    if (!searchRes.ok) {
+      handleDriveHttpFailure(await parseDriveError(searchRes));
     }
-  );
 
-  if (createRes.status === 401 || createRes.status === 403) {
-    cachedAccessToken = null;
-    throw new GoogleDriveAuthExpiredError();
-  }
+    const searchJson = (await searchRes.json()) as { files?: DriveFileInfo[] };
+    if (Array.isArray(searchJson.files) && searchJson.files.length > 0 && searchJson.files[0]?.id) {
+      return searchJson.files[0];
+    }
 
-  if (!createRes.ok) {
-    throw new Error(await parseDriveErrorMessage(createRes));
-  }
+    // Buat folder baru jika belum ada
+    const createRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?fields=${encodeURIComponent(
+        'id,name,webViewLink,mimeType,createdTime'
+      )}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder',
+          description: 'Folder arsip otomatis backup Jurnal Mengajar SIMPATI SMKN 1 Tegalsari.',
+        }),
+      }
+    );
 
-  const folder = (await createRes.json()) as DriveFileInfo;
-  if (!folder?.id) {
-    throw new Error('Google Drive tidak mengembalikan ID folder backup.');
+    if (!createRes.ok) {
+      handleDriveHttpFailure(await parseDriveError(createRes));
+    }
+
+    const folder = (await createRes.json()) as DriveFileInfo;
+    if (!folder?.id) {
+      throw new Error('Google Drive tidak mengembalikan ID folder backup.');
+    }
+    return folder;
+  })();
+
+  inFlightFolderLookups.set(dedupeKey, run);
+  try {
+    return await run;
+  } finally {
+    inFlightFolderLookups.delete(dedupeKey);
   }
-  return folder;
 }
 
 export async function uploadBlobToGoogleDrive(
@@ -221,13 +375,8 @@ export async function uploadBlobToGoogleDrive(
     body: formData,
   });
 
-  if (res.status === 401 || res.status === 403) {
-    cachedAccessToken = null;
-    throw new GoogleDriveAuthExpiredError();
-  }
-
   if (!res.ok) {
-    throw new Error(await parseDriveErrorMessage(res));
+    handleDriveHttpFailure(await parseDriveError(res));
   }
 
   const uploaded = (await res.json()) as DriveFileInfo;
@@ -258,13 +407,8 @@ export async function listRecentJournalDriveBackups(
     },
   });
 
-  if (res.status === 401 || res.status === 403) {
-    cachedAccessToken = null;
-    throw new GoogleDriveAuthExpiredError();
-  }
-
   if (!res.ok) {
-    throw new Error(await parseDriveErrorMessage(res));
+    handleDriveHttpFailure(await parseDriveError(res));
   }
 
   const data = (await res.json()) as { files?: DriveFileInfo[] };
